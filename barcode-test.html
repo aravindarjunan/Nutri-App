@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Barcode Test</title>
+<style>
+  body { font-family: sans-serif; padding: 16px; max-width: 480px; margin: 0 auto; }
+  h1 { text-align: center; margin: 0 0 10px; }
+  .btn { display: block; width: 100%; font-size: 18px; padding: 14px; margin: 10px 0; border: none;
+         border-radius: 12px; background: #1a73e8; color: #fff; cursor: pointer; }
+  .btn.gray { background: #666; }
+  .btn:disabled { opacity: .5; }
+  #wrap { position: relative; display: none; }
+  video { width: 100%; border-radius: 12px; background: #000; }
+  #box { position: absolute; left: 10%; right: 10%; top: 35%; bottom: 35%;
+         border: 3px solid #f2b600; border-radius: 8px; pointer-events: none; }
+  #found { display: none; background: #e6f4ea; border-left: 6px solid #188038; padding: 12px;
+           border-radius: 8px; margin: 12px 0; font-size: 22px; word-break: break-all; }
+  #msg { color: #444; font-size: 15px; line-height: 1.5; }
+  #info { color: #666; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>Barcode Test</h1>
+  <p id="info"></p>
+  <p id="msg">Checking whether this browser can read barcodes...</p>
+
+  <button class="btn" id="startBtn" disabled>Start camera</button>
+  <div id="wrap"><video id="video" playsinline muted></video><div id="box"></div></div>
+  <button class="btn gray" id="stopBtn" style="display:none">Stop camera</button>
+  <div id="found"></div>
+
+<script>
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const wrap = document.getElementById('wrap');
+  const video = document.getElementById('video');
+  const found = document.getElementById('found');
+  const msg = document.getElementById('msg');
+  const info = document.getElementById('info');
+  let stream = null, detector = null, timer = null, busy = false;
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  async function init() {
+    if (!('BarcodeDetector' in window)) {
+      msg.textContent = 'This browser does NOT have the built-in barcode reader. Tell Claude, and we will use a backup reader instead.';
+      return;
+    }
+    try {
+      const supported = await BarcodeDetector.getSupportedFormats();
+      info.textContent = 'Formats this phone can read: ' + supported.join(', ');
+      const wanted = ['upc_a', 'upc_e', 'ean_13', 'ean_8'].filter(function (f) { return supported.indexOf(f) !== -1; });
+      if (!wanted.length) {
+        msg.textContent = 'The built-in reader exists but cannot read UPC/EAN barcodes. Tell Claude what the formats line above says.';
+        return;
+      }
+      detector = new BarcodeDetector({ formats: wanted });
+      msg.textContent = 'Good news: this phone can read barcodes. Tap "Start camera".';
+      startBtn.disabled = false;
+    } catch (e) {
+      msg.textContent = 'Setup error: ' + e.message;
+    }
+  }
+
+  startBtn.addEventListener('click', async function () {
+    found.style.display = 'none';
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } }, audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+      wrap.style.display = 'block';
+      startBtn.style.display = 'none';
+      stopBtn.style.display = 'block';
+      msg.textContent = 'Point the camera at the barcode and hold steady, about 6 to 8 inches away.';
+      timer = setInterval(scan, 300);
+    } catch (e) {
+      if (e.name === 'NotAllowedError') {
+        msg.textContent = 'Camera permission was blocked. In Chrome, tap the icon at the left of the address bar, then Permissions, then Camera, then Allow. Reload and try again.';
+      } else {
+        msg.textContent = 'Camera error: ' + e.name + ' - ' + e.message;
+      }
+    }
+  });
+
+  async function scan() {
+    if (busy || !detector || video.readyState < 2) return;
+    busy = true;
+    try {
+      const codes = await detector.detect(video);
+      if (codes.length) {
+        const c = codes[0];
+        found.innerHTML = 'Found: <b>' + esc(c.rawValue) + '</b><br><small>type: ' + esc(c.format) + '</small>';
+        found.style.display = 'block';
+        if (navigator.vibrate) navigator.vibrate(120);
+        stopCamera();
+        msg.textContent = 'Compare these digits with the number printed under the barcode on the package.';
+      }
+    } catch (e) {
+      msg.textContent = 'Scan error: ' + e.message;
+    }
+    busy = false;
+  }
+
+  function stopCamera() {
+    clearInterval(timer);
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    video.srcObject = null;
+    wrap.style.display = 'none';
+    stopBtn.style.display = 'none';
+    startBtn.style.display = 'block';
+    startBtn.textContent = 'Scan another';
+  }
+  stopBtn.addEventListener('click', stopCamera);
+
+  init();
+</script>
+</body>
+</html>
