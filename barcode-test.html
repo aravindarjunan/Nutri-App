@@ -8,8 +8,9 @@
   body { font-family: sans-serif; padding: 16px; max-width: 480px; margin: 0 auto; }
   h1 { text-align: center; margin: 0 0 10px; }
   .btn { display: block; width: 100%; font-size: 18px; padding: 14px; margin: 10px 0; border: none;
-         border-radius: 12px; background: #1a73e8; color: #fff; cursor: pointer; }
+         border-radius: 12px; background: #1a73e8; color: #fff; cursor: pointer; box-sizing: border-box; }
   .btn.gray { background: #666; }
+  .btn.small { font-size: 16px; padding: 10px; margin: 0; width: auto; }
   .btn:disabled { opacity: .5; }
   #wrap { position: relative; display: none; }
   video { width: 100%; border-radius: 12px; background: #000; }
@@ -19,6 +20,16 @@
            border-radius: 8px; margin: 12px 0; font-size: 22px; word-break: break-all; }
   #msg { color: #444; font-size: 15px; line-height: 1.5; }
   #info { color: #666; font-size: 13px; }
+  .row { display: flex; gap: 8px; margin: 10px 0; }
+  .row input { flex: 1; font-size: 16px; padding: 10px; min-width: 0; box-sizing: border-box; }
+  #out h3 { margin: 14px 0 4px; }
+  #out table { width: 100%; border-collapse: collapse; }
+  #out td { padding: 6px 4px; border-bottom: 1px solid #ddd; font-size: 14px; vertical-align: top; }
+  #out td:nth-child(2) { text-align: right; font-weight: bold; white-space: nowrap; }
+  #out td:nth-child(3) { color: #777; font-size: 12px; width: 34%; }
+  .missing { color: #b00020; font-weight: normal; }
+  .box { background: #f4f4f4; border-radius: 8px; padding: 10px; font-size: 14px; line-height: 1.5; }
+  .note { color: #666; font-size: 12px; margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -31,6 +42,13 @@
   <button class="btn gray" id="stopBtn" style="display:none">Stop camera</button>
   <div id="found"></div>
 
+  <div class="row">
+    <input id="manual" inputmode="numeric" placeholder="or type barcode digits">
+    <button class="btn small" id="manualBtn">Look up</button>
+  </div>
+
+  <div id="out"></div>
+
 <script>
   const startBtn = document.getElementById('startBtn');
   const stopBtn = document.getElementById('stopBtn');
@@ -39,29 +57,48 @@
   const found = document.getElementById('found');
   const msg = document.getElementById('msg');
   const info = document.getElementById('info');
+  const out = document.getElementById('out');
+  const manual = document.getElementById('manual');
   let stream = null, detector = null, timer = null, busy = false;
+
+  // [Open Food Facts key, label name, unit shown, multiplier from OFF's grams to that unit]
+  const FIELDS = [
+    ['energy-kcal',   'Calories',           '',    1],
+    ['fat',           'Total fat',          ' g',  1],
+    ['saturated-fat', 'Saturated fat',      ' g',  1],
+    ['trans-fat',     'Trans fat',          ' g',  1],
+    ['cholesterol',   'Cholesterol',        ' mg', 1000],
+    ['sodium',        'Sodium',             ' mg', 1000],
+    ['carbohydrates', 'Total carbohydrate', ' g',  1],
+    ['fiber',         'Dietary fiber',      ' g',  1],
+    ['sugars',        'Total sugars',       ' g',  1],
+    ['added-sugars',  'Added sugars',       ' g',  1],
+    ['proteins',      'Protein',            ' g',  1],
+    ['vitamin-d',     'Vitamin D',          ' mcg', 1000000],
+    ['calcium',       'Calcium',            ' mg', 1000],
+    ['iron',          'Iron',               ' mg', 1000],
+    ['potassium',     'Potassium',          ' mg', 1000]
+  ];
 
   function esc(s) {
     return String(s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  function isNum(x) { return x !== null && x !== undefined && x !== '' && isFinite(Number(x)); }
 
   async function init() {
     if (!('BarcodeDetector' in window)) {
-      msg.textContent = 'This browser does NOT have the built-in barcode reader. Tell Claude, and we will use a backup reader instead.';
+      msg.textContent = 'This browser does NOT have the built-in barcode reader. You can still type digits below.';
       return;
     }
     try {
       const supported = await BarcodeDetector.getSupportedFormats();
       info.textContent = 'Formats this phone can read: ' + supported.join(', ');
       const wanted = ['upc_a', 'upc_e', 'ean_13', 'ean_8'].filter(function (f) { return supported.indexOf(f) !== -1; });
-      if (!wanted.length) {
-        msg.textContent = 'The built-in reader exists but cannot read UPC/EAN barcodes. Tell Claude what the formats line above says.';
-        return;
-      }
+      if (!wanted.length) { msg.textContent = 'Reader cannot read UPC/EAN barcodes.'; return; }
       detector = new BarcodeDetector({ formats: wanted });
-      msg.textContent = 'Good news: this phone can read barcodes. Tap "Start camera".';
+      msg.textContent = 'Tap "Start camera" and scan a barcode, or type the digits below.';
       startBtn.disabled = false;
     } catch (e) {
       msg.textContent = 'Setup error: ' + e.message;
@@ -70,6 +107,7 @@
 
   startBtn.addEventListener('click', async function () {
     found.style.display = 'none';
+    out.innerHTML = '';
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' } }, audio: false
@@ -82,11 +120,9 @@
       msg.textContent = 'Point the camera at the barcode and hold steady, about 6 to 8 inches away.';
       timer = setInterval(scan, 300);
     } catch (e) {
-      if (e.name === 'NotAllowedError') {
-        msg.textContent = 'Camera permission was blocked. In Chrome, tap the icon at the left of the address bar, then Permissions, then Camera, then Allow. Reload and try again.';
-      } else {
-        msg.textContent = 'Camera error: ' + e.name + ' - ' + e.message;
-      }
+      msg.textContent = (e.name === 'NotAllowedError')
+        ? 'Camera permission was blocked. In Chrome tap the icon at the left of the address bar, then Permissions, then Camera, then Allow.'
+        : 'Camera error: ' + e.name + ' - ' + e.message;
     }
   });
 
@@ -97,11 +133,11 @@
       const codes = await detector.detect(video);
       if (codes.length) {
         const c = codes[0];
-        found.innerHTML = 'Found: <b>' + esc(c.rawValue) + '</b><br><small>type: ' + esc(c.format) + '</small>';
+        found.innerHTML = 'Barcode: <b>' + esc(c.rawValue) + '</b>';
         found.style.display = 'block';
         if (navigator.vibrate) navigator.vibrate(120);
         stopCamera();
-        msg.textContent = 'Compare these digits with the number printed under the barcode on the package.';
+        lookup(c.rawValue);
       }
     } catch (e) {
       msg.textContent = 'Scan error: ' + e.message;
@@ -119,6 +155,74 @@
     startBtn.textContent = 'Scan another';
   }
   stopBtn.addEventListener('click', stopCamera);
+
+  document.getElementById('manualBtn').addEventListener('click', function () {
+    const code = manual.value.replace(/\D/g, '');
+    if (code.length < 8) { out.innerHTML = '<p class="missing">Please type the full barcode digits.</p>'; return; }
+    found.innerHTML = 'Barcode: <b>' + esc(code) + '</b>';
+    found.style.display = 'block';
+    lookup(code);
+  });
+
+  async function fetchProduct(code) {
+    const fields = 'code,product_name,brands,serving_size,serving_quantity,nutriments,ingredients_text,ingredients_text_en';
+    const url = 'https://world.openfoodfacts.org/api/v2/product/' + encodeURIComponent(code) + '.json?fields=' + fields;
+    const ctl = new AbortController();
+    const t = setTimeout(function () { ctl.abort(); }, 20000);
+    try {
+      const r = await fetch(url, { signal: ctl.signal });
+      if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      return (d && d.status === 1 && d.product) ? d.product : null;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async function lookup(code) {
+    out.innerHTML = '<p>Looking up ' + esc(code) + ' in Open Food Facts...</p>';
+    try {
+      let p = await fetchProduct(code);
+      if (!p && code.length === 12) p = await fetchProduct('0' + code);   // try 13-digit form
+      if (!p) {
+        out.innerHTML = '<p><b>Not found</b> in Open Food Facts. For a product like this, the app would ask for a photo instead.</p>';
+        return;
+      }
+      render(p);
+    } catch (e) {
+      const text = (e.name === 'AbortError') ? 'Timed out after 20 seconds.' : e.message;
+      out.innerHTML = '<p class="missing"><b>Lookup failed:</b> ' + esc(text) + '</p>' +
+        '<p>If this says "Failed to fetch", the browser may be blocked from calling Open Food Facts directly. Tell Claude exactly what you see.</p>';
+    }
+  }
+
+  function render(p) {
+    const n = p.nutriments || {};
+    const servingQty = isNum(p.serving_quantity) ? Number(p.serving_quantity) : 0;
+    let have = 0;
+    let rows = '';
+    FIELDS.forEach(function (f) {
+      let v = null, how = '';
+      if (isNum(n[f[0] + '_serving'])) { v = Number(n[f[0] + '_serving']); how = 'per serving'; }
+      else if (isNum(n[f[0] + '_100g']) && servingQty > 0) { v = Number(n[f[0] + '_100g']) * servingQty / 100; how = 'estimated from per-100g'; }
+      else if (isNum(n[f[0] + '_100g'])) { v = Number(n[f[0] + '_100g']); how = 'per 100 g only'; }
+      let shown;
+      if (v === null) { shown = '<span class="missing">missing</span>'; }
+      else { have++; shown = esc(Math.round(v * f[3] * 100) / 100) + f[2]; }
+      rows += '<tr><td>' + f[1] + '</td><td>' + shown + '</td><td>' + how + '</td></tr>';
+    });
+
+    const ing = p.ingredients_text_en || p.ingredients_text || '';
+    let html = '<h3>' + esc(p.product_name || '(no name)') + '</h3>';
+    html += '<div class="box">Brand: ' + esc(p.brands || 'unknown') +
+            '<br>Serving size: ' + esc(p.serving_size || 'not listed') +
+            '<br>Nutrients found: <b>' + have + ' of ' + FIELDS.length + '</b>' +
+            '<br>Ingredients: <b>' + (ing ? 'yes' : 'MISSING') + '</b></div>';
+    html += '<h3>Nutrients</h3><table>' + rows + '</table>';
+    html += '<h3>Ingredients</h3><div class="box">' + (ing ? esc(ing) : '<span class="missing">not in the database</span>') + '</div>';
+    html += '<p class="note">Data: Open Food Facts (volunteer-contributed, may be incomplete or out of date). Always compare with the package.</p>';
+    out.innerHTML = html;
+  }
 
   init();
 </script>
