@@ -60,6 +60,8 @@
   td:last-child { text-align: right; font-weight: bold; }
   .missing { color: #b00020; font-weight: normal; }
   details { margin: 8px 0; }
+  textarea { width: 100%; box-sizing: border-box; font-size: 14px; padding: 8px; margin-top: 8px; }
+  label.btn { cursor: pointer; }
   .saveditem { display: flex; justify-content: space-between; align-items: center; gap: 8px;
                padding: 8px 0; border-bottom: 1px solid #ddd; }
 </style>
@@ -99,6 +101,22 @@
   <details id="savedBox">
     <summary id="savedSummary">Saved products (0)</summary>
     <div id="savedList"></div>
+  </details>
+
+  <details id="backupBox">
+    <summary id="backupSummary">Backup &amp; restore</summary>
+    <p class="note" id="backupInfo"></p>
+    <button class="btn" id="exportBtn">Save backup file</button>
+    <button class="btn gray" id="shareBtn" style="display:none">Share backup (Drive, email, Keep...)</button>
+    <button class="btn gray" id="copyBtn">Copy backup as text</button>
+    <label class="btn gray" for="importFile">Restore from a backup file</label>
+    <input id="importFile" type="file" style="display:none">
+    <details>
+      <summary>Or paste backup text</summary>
+      <textarea id="pasteBox" rows="5" placeholder="Paste backup text here"></textarea>
+      <button class="btn gray" id="pasteBtn">Restore from pasted text</button>
+    </details>
+    <p class="note">The backup has only your saved products. It does not include your API key. Restoring adds to what is already on this phone and never deletes anything.</p>
   </details>
 
 <script>
@@ -290,6 +308,59 @@
     });
     return diffs;
   }
+
+  // ----- backup / restore (pure helpers) -----
+  const BACKUP_APP = 'label-check-backup';
+
+  function buildBackup(all, when) {
+    return { app: BACKUP_APP, version: 1, exportedAt: when || new Date().toISOString(),
+             count: Object.keys(all).length, products: all };
+  }
+
+  // Reads backup text. Returns { ok, products, skipped } or { ok:false, error }.
+  function parseBackup(text) {
+    let d;
+    try { d = JSON.parse(String(text).trim()); }
+    catch (e) { return { ok: false, error: 'Could not read that. It does not look like a Label Check backup.' }; }
+    if (!d || d.app !== BACKUP_APP || !d.products || typeof d.products !== 'object' || Array.isArray(d.products)) {
+      return { ok: false, error: 'That file is not a Label Check backup.' };
+    }
+    const clean = {};
+    let skipped = 0;
+    Object.keys(d.products).forEach(function (k) {
+      const s = d.products[k];
+      const key = s ? codeKey(s.code) : '';
+      if (!s || !key || !s.nutrients || typeof s.nutrients !== 'object' || Array.isArray(s.nutrients)) { skipped++; return; }
+      clean[key] = {
+        code: String(s.code).replace(/\D/g, ''),
+        name: typeof s.name === 'string' ? s.name : '',
+        nutrients: s.nutrients,
+        savedAt: typeof s.savedAt === 'string' ? s.savedAt : ''
+      };
+    });
+    return { ok: true, products: clean, skipped: skipped };
+  }
+
+  // Adds backup products to what is on the phone. Never deletes. If both have the
+  // same barcode, the one saved more recently wins.
+  function mergeProducts(mine, incoming) {
+    const merged = Object.assign({}, mine);
+    let added = 0, updated = 0, kept = 0;
+    Object.keys(incoming).forEach(function (k) {
+      const inc = incoming[k];
+      if (!merged[k]) { merged[k] = inc; added++; return; }
+      const a = Date.parse(merged[k].savedAt) || 0;
+      const b = Date.parse(inc.savedAt) || 0;
+      if (b > a) { merged[k] = inc; updated++; } else { kept++; }
+    });
+    return { merged: merged, added: added, updated: updated, kept: kept };
+  }
+
+  // How many saved products are newer than the last backup?
+  function unbackedCount(all, lastBackupIso) {
+    const t = Date.parse(lastBackupIso) || 0;
+    return Object.keys(all).filter(function (k) { return (Date.parse(all[k].savedAt) || 0) > t; }).length;
+  }
   // ==== PURE END ====
 
   // ---------- screen elements ----------
@@ -345,6 +416,7 @@
     const all = loadSaved();
     const keys = Object.keys(all);
     document.getElementById('savedSummary').textContent = 'Saved products (' + keys.length + ')';
+    renderBackupInfo(all);
     if (!keys.length) {
       savedList.innerHTML = '<p class="note">Nothing saved yet. Check a product with a label photo, then tap "Remember this product".</p>';
       return;
@@ -363,6 +435,108 @@
     removeSaved(b.getAttribute('data-code'));
     statusEl.textContent = 'Removed from saved products.';
   });
+  // ---------- backup / restore ----------
+  const BACKUP_TIME_KEY = 'last_backup_at';
+  function getLastBackup() { try { return localStorage.getItem(BACKUP_TIME_KEY) || ''; } catch (e) { return ''; } }
+  function markBackedUp() { try { localStorage.setItem(BACKUP_TIME_KEY, new Date().toISOString()); } catch (e) {} renderSaved(); }
+
+  function renderBackupInfo(all) {
+    const total = Object.keys(all).length;
+    const last = getLastBackup();
+    const pending = unbackedCount(all, last);
+    let info;
+    if (!total) info = 'Nothing saved yet, so there is nothing to back up.';
+    else if (!last) info = 'You have not made a backup yet. ' + total + ' saved product(s) are only on this phone.';
+    else info = 'Last backup: ' + new Date(last).toLocaleString() + '. ' +
+      (pending ? pending + ' product(s) saved since then are not backed up.' : 'Everything is backed up.');
+    document.getElementById('backupInfo').textContent = info;
+    document.getElementById('backupSummary').textContent =
+      'Backup & restore' + (pending ? ' - ' + pending + ' not backed up' : '');
+  }
+
+  function backupText() { return JSON.stringify(buildBackup(loadSaved()), null, 1); }
+  function backupName() { return 'label-check-backup-' + new Date().toISOString().slice(0, 10) + '.json'; }
+  function hasProducts() {
+    if (Object.keys(loadSaved()).length) return true;
+    statusEl.textContent = 'Nothing saved yet, so there is nothing to back up.';
+    return false;
+  }
+
+  document.getElementById('exportBtn').addEventListener('click', function () {
+    if (!hasProducts()) return;
+    const blob = new Blob([backupText()], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = backupName();
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+    markBackedUp();
+    statusEl.textContent = 'Backup file saved to your phone (Downloads folder). Copy it somewhere safe, like Google Drive or your NAS.';
+  });
+
+  document.getElementById('copyBtn').addEventListener('click', async function () {
+    if (!hasProducts()) return;
+    const text = backupText();
+    try {
+      await navigator.clipboard.writeText(text);
+      markBackedUp();
+      statusEl.textContent = 'Backup copied. Paste it into a note, email or message to yourself.';
+    } catch (e) {
+      const box = document.getElementById('pasteBox');
+      box.value = text;
+      box.closest('details').open = true;
+      box.focus(); box.select();
+      statusEl.textContent = 'Could not copy automatically. The text is in the box below: select all, copy it, and keep it safe.';
+    }
+  });
+
+  const shareBtn = document.getElementById('shareBtn');
+  try {
+    if (navigator.canShare && typeof File === 'function' &&
+        navigator.canShare({ files: [new File(['{}'], 'b.json', { type: 'application/json' })] })) {
+      shareBtn.style.display = 'block';
+    }
+  } catch (e) {}
+  shareBtn.addEventListener('click', async function () {
+    if (!hasProducts()) return;
+    try {
+      const file = new File([backupText()], backupName(), { type: 'application/json' });
+      await navigator.share({ files: [file], title: 'Label Check backup' });
+      markBackedUp();
+      statusEl.textContent = 'Backup shared.';
+    } catch (e) {
+      if (e && e.name !== 'AbortError') statusEl.textContent = 'Could not share: ' + e.message + '. Try "Save backup file" instead.';
+    }
+  });
+
+  function restoreFromText(text) {
+    const r = parseBackup(text);
+    if (!r.ok) { statusEl.textContent = r.error; return; }
+    const m = mergeProducts(loadSaved(), r.products);
+    if (!writeSaved(m.merged)) { statusEl.textContent = 'Could not save on this phone (browser storage is blocked).'; return; }
+    renderSaved();
+    let msg = 'Restored. Added ' + m.added + ', updated ' + m.updated + ', kept ' + m.kept + ' you already had.';
+    if (r.skipped) msg += ' Skipped ' + r.skipped + ' damaged entr' + (r.skipped === 1 ? 'y' : 'ies') + '.';
+    statusEl.textContent = msg;
+  }
+
+  document.getElementById('importFile').addEventListener('change', function (ev) {
+    const f = ev.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = function () { restoreFromText(reader.result); };
+    reader.onerror = function () { statusEl.textContent = 'Could not read that file.'; };
+    reader.readAsText(f);
+    ev.target.value = '';
+  });
+
+  document.getElementById('pasteBtn').addEventListener('click', function () {
+    const box = document.getElementById('pasteBox');
+    if (!box.value.trim()) { statusEl.textContent = 'Paste the backup text into the box first.'; return; }
+    restoreFromText(box.value);
+    box.value = '';
+  });
+
   renderSaved();
 
   function saveCurrent() {
