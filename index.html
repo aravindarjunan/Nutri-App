@@ -123,20 +123,29 @@
       });
     }
 
-    readBtn.addEventListener('click', async function () {
+        readBtn.addEventListener('click', async function () {
       const key = getKey();
       if (!key) { statusEl.textContent = 'Open "API key setup" and save your key first.'; document.getElementById('keybox').open = true; return; }
       if (!currentFile) return;
 
       readBtn.disabled = true;
-      statusEl.textContent = 'Reading label... (5-15 seconds)';
       resultEl.innerHTML = '';
+      let secs = 0;
+      statusEl.textContent = 'Reading label... 0s';
+      const timer = setInterval(function () {
+        secs++;
+        statusEl.textContent = 'Reading label... ' + secs + 's';
+      }, 1000);
+
+      const controller = new AbortController();
+      const killer = setTimeout(function () { controller.abort(); }, 60000);
 
       try {
         const b64 = await shrinkToBase64(currentFile);
         const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + MODEL + ':generateContent';
         const resp = await fetch(url, {
           method: 'POST',
+          signal: controller.signal,
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
           body: JSON.stringify({
             contents: [{ parts: [{ text: PROMPT }, { inline_data: { mime_type: 'image/jpeg', data: b64 } }] }],
@@ -150,10 +159,16 @@
         const text = data.candidates[0].content.parts.map(function (p) { return p.text || ''; }).join('');
         const nutrients = JSON.parse(text);
         showResult(nutrients);
-        statusEl.textContent = 'Done. Please compare with the real label to check accuracy.';
+        statusEl.textContent = 'Done in ' + secs + 's. Please compare with the real label to check accuracy.';
       } catch (err) {
-        statusEl.textContent = 'Error: ' + err.message;
+        if (err.name === 'AbortError') {
+          statusEl.textContent = 'Timed out after 60 seconds. Try again, or switch to a faster model.';
+        } else {
+          statusEl.textContent = 'Error: ' + err.message;
+        }
       }
+      clearInterval(timer);
+      clearTimeout(killer);
       readBtn.disabled = false;
     });
 
