@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Label Check</title>
-  <link rel="manifest" href="manifest.json">
+<link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#FFF1B8">
@@ -16,8 +16,18 @@
          cursor: pointer; box-sizing: border-box; }
   .btn.green { background: #188038; }
   .btn.gray { background: #666; font-size: 14px; padding: 10px; }
+  .btn.tiny { width: auto; font-size: 14px; padding: 8px 12px; margin: 0; }
   .btn:disabled { opacity: .5; }
   input[type=password] { width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; }
+  .row { display: flex; gap: 8px; margin: 10px 0; }
+  .row input { flex: 1; font-size: 16px; padding: 10px; min-width: 0; box-sizing: border-box; }
+  .row .btn { width: auto; margin: 0; font-size: 16px; padding: 10px 14px; }
+  #wrap { position: relative; display: none; }
+  video { width: 100%; border-radius: 12px; background: #000; }
+  #box { position: absolute; left: 10%; right: 10%; top: 35%; bottom: 35%;
+         border: 3px solid #f2b600; border-radius: 8px; pointer-events: none; }
+  .divider { text-align: center; color: #888; margin: 18px 0 4px; font-size: 14px; }
+  #verifyNote { text-align: center; color: #8a5a00; font-size: 14px; margin: 6px 0; }
   #thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
   #thumbs img { width: 30%; border-radius: 8px; border: 1px solid #ccc; }
   #status { text-align: center; color: #555; margin: 10px 0; }
@@ -27,6 +37,12 @@
   .v-green { background: #188038; }
   .v-yellow { background: #f2b600; color: #222; }
   .v-red { background: #c5221f; }
+  .banner { border-radius: 10px; padding: 12px; margin: 12px 0; font-size: 14px; line-height: 1.5; }
+  .b-warn { background: #fff8e1; border-left: 6px solid #f2b600; }
+  .b-ok { background: #e6f4ea; border-left: 6px solid #188038; }
+  .b-bad { background: #fce8e6; border-left: 6px solid #c5221f; }
+  .banner table { margin: 8px 0; }
+  .banner .btn { margin: 8px 0 0; }
   ul { padding-left: 0; list-style: none; }
   li.reason { padding: 8px 10px; margin: 6px 0; border-radius: 8px; font-size: 15px; }
   li.red { background: #fce8e6; border-left: 6px solid #c5221f; }
@@ -44,6 +60,8 @@
   td:last-child { text-align: right; font-weight: bold; }
   .missing { color: #b00020; font-weight: normal; }
   details { margin: 8px 0; }
+  .saveditem { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+               padding: 8px 0; border-bottom: 1px solid #ddd; }
 </style>
 </head>
 <body>
@@ -56,18 +74,38 @@
     <button class="btn gray" id="saveKey">Save key</button>
   </details>
 
-  <label class="btn" for="cam">1. Add photo (nutrition panel, then ingredients)</label>
+  <button class="btn" id="scanBtn">Scan barcode</button>
+  <div id="wrap"><video id="video" playsinline muted></video><div id="box"></div></div>
+  <button class="btn gray" id="stopBtn" style="display:none">Stop camera</button>
+  <details>
+    <summary>Type barcode digits instead</summary>
+    <div class="row">
+      <input id="manual" inputmode="numeric" placeholder="barcode digits">
+      <button class="btn" id="manualBtn">Look up</button>
+    </div>
+  </details>
+
+  <div class="divider">or read the label with photos</div>
+  <p id="verifyNote"></p>
+  <label class="btn" id="photoSection" for="cam">Add photo (nutrition panel, then ingredients)</label>
   <input id="cam" type="file" accept="image/*" capture="environment" style="display:none">
   <div id="thumbs"></div>
   <button class="btn gray" id="clearBtn" style="display:none">Clear photos</button>
+  <button class="btn green" id="readBtn" style="display:none">Check product</button>
 
-  <button class="btn green" id="readBtn" style="display:none">2. Check product</button>
   <p id="status"></p>
   <div id="result"></div>
+
+  <details id="savedBox">
+    <summary id="savedSummary">Saved products (0)</summary>
+    <div id="savedList"></div>
+  </details>
 
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
+
+  // ==== PURE START (no screen code in this block) ====
 
   // ===== YOUR RULES (edit the numbers here) =====
   // red/yellow = the verdict turns that color when the value is ABOVE the number.
@@ -98,7 +136,7 @@
     { level: 'yellow', why: 'Preservative (benzoate / sorbate)', re: /sodium benzoate|potassium sorbate/i }
   ];
 
-  // For the full nutrient table
+  // Full nutrient table: [key, label, unit text]
   const FIELDS = [
     ['serving_size', 'Serving size', ''], ['servings_per_container', 'Servings per container', ''],
     ['calories', 'Calories', ''], ['total_fat_g', 'Total fat', ' g'],
@@ -111,19 +149,155 @@
     ['calcium_mg', 'Calcium', ' mg'], ['iron_mg', 'Iron', ' mg'], ['potassium_mg', 'Potassium', ' mg']
   ];
 
-  const PROMPT =
-    'You are reading a food product from one to three photos of the SAME product. ' +
-    'The photos may show the US Nutrition Facts label, the ingredients list, or both. ' +
-    'Return ONLY a JSON object with exactly these keys: serving_size (string, as printed), ' +
-    'servings_per_container (number or string), calories, total_fat_g, saturated_fat_g, trans_fat_g, ' +
-    'polyunsaturated_fat_g, monounsaturated_fat_g, cholesterol_mg, sodium_mg, total_carbohydrate_g, ' +
-    'dietary_fiber_g, total_sugars_g, added_sugars_g, protein_g, vitamin_d_mcg, calcium_mg, iron_mg, ' +
-    'potassium_mg, ingredients. All nutrient values are numbers per ONE serving, in the unit named by the key. ' +
-    'If a nutrient is not printed, use null. Do not guess or calculate missing values. ' +
-    '"ingredients" is an array of strings, one per ingredient exactly as printed, in order ' +
-    '(split on commas; list ingredients inside parentheses as their own items). ' +
-    'If no ingredients list is visible in any photo, use null for ingredients.';
+  // How Open Food Facts names map to ours: [our key, their key, multiplier to our unit]
+  const OFF_MAP = [
+    ['calories', 'energy-kcal', 1], ['total_fat_g', 'fat', 1], ['saturated_fat_g', 'saturated-fat', 1],
+    ['trans_fat_g', 'trans-fat', 1], ['polyunsaturated_fat_g', 'polyunsaturated-fat', 1],
+    ['monounsaturated_fat_g', 'monounsaturated-fat', 1], ['cholesterol_mg', 'cholesterol', 1000],
+    ['sodium_mg', 'sodium', 1000], ['total_carbohydrate_g', 'carbohydrates', 1],
+    ['dietary_fiber_g', 'fiber', 1], ['total_sugars_g', 'sugars', 1], ['added_sugars_g', 'added-sugars', 1],
+    ['protein_g', 'proteins', 1], ['vitamin_d_mcg', 'vitamin-d', 1000000], ['calcium_mg', 'calcium', 1000],
+    ['iron_mg', 'iron', 1000], ['potassium_mg', 'potassium', 1000]
+  ];
 
+  // Numbers compared between database and label: [key, name, unit, smallest difference that counts]
+  const COMPARE = [
+    ['calories', 'Calories', '', 20], ['saturated_fat_g', 'Saturated fat', ' g', 0.6],
+    ['trans_fat_g', 'Trans fat', ' g', 0.2], ['sodium_mg', 'Sodium', ' mg', 20],
+    ['added_sugars_g', 'Added sugars', ' g', 0.6], ['cholesterol_mg', 'Cholesterol', ' mg', 10],
+    ['total_carbohydrate_g', 'Carbohydrate', ' g', 1], ['protein_g', 'Protein', ' g', 1]
+  ];
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function isNum(x) { return x !== null && x !== undefined && x !== '' && isFinite(Number(x)); }
+  function num(v) {
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    if (typeof v === 'string') { const x = parseFloat(v); return isNaN(x) ? null : x; }
+    return null;
+  }
+  function fmt(v, unit) {
+    const x = num(v);
+    return x === null ? '<span class="missing">missing</span>' : esc(x) + unit;
+  }
+  function codeKey(c) { return String(c).replace(/\D/g, '').replace(/^0+/, ''); }
+
+  function splitIngredients(t) {
+    return String(t).replace(/[_*]/g, '').replace(/[()\[\]{}:;]/g, ',').split(',')
+      .map(function (s) { return s.replace(/\.+$/, '').replace(/^\s*ingredients\s*/i, '').trim(); })
+      .filter(function (s) { return s.length > 0 && !/^[\d.\s%]+$/.test(s); });
+  }
+
+  function ingredientList(n) {
+    if (Array.isArray(n.ingredients)) {
+      const a = n.ingredients.map(String).filter(function (s) { return s.trim().length > 0; });
+      return a.length ? a : null;
+    }
+    if (typeof n.ingredients === 'string' && n.ingredients.trim()) return splitIngredients(n.ingredients);
+    return null;
+  }
+
+  // Turn an Open Food Facts product into the same shape the label reader returns
+  function offToNutrients(p) {
+    const n = p.nutriments || {};
+    const qty = isNum(p.serving_quantity) ? Number(p.serving_quantity) : 0;
+    const out = { serving_size: p.serving_size || '', servings_per_container: null };
+    let only100 = false;
+    OFF_MAP.forEach(function (m) {
+      let v = null;
+      if (isNum(n[m[1] + '_serving'])) {
+        v = Number(n[m[1] + '_serving']);
+      } else if (isNum(n[m[1] + '_100g'])) {
+        if (qty > 0) v = Number(n[m[1] + '_100g']) * qty / 100;
+        else only100 = true;
+      }
+      out[m[0]] = (v === null) ? null : Math.round(v * m[2] * 100) / 100;
+    });
+    const ingText = p.ingredients_text_en || p.ingredients_text || '';
+    out.ingredients = ingText ? splitIngredients(ingText) : null;
+    const notes = [];
+    if (only100) notes.push('The database only has per-100 g values (no serving size) for some nutrients, so those are blank.');
+    return { nutrients: out, notes: notes };
+  }
+
+  function evaluate(n) {
+    const reasons = [];
+    const notes = [];
+    let incomplete = false;
+
+    RULES.forEach(function (r) {
+      const v = num(n[r.key]);
+      if (v === null) { notes.push(r.name + ' not found'); incomplete = true; return; }
+      if (r.red !== null && v > r.red) {
+        reasons.push({ level: 'red', text: r.name + ': ' + v + ' ' + r.unit + ' (limit ' + r.red + ' ' + r.unit + ')' });
+      } else if (r.yellow !== null && v > r.yellow) {
+        reasons.push({ level: 'yellow', text: r.name + ': ' + v + ' ' + r.unit + ' (watch above ' + r.yellow + ' ' + r.unit + ')' });
+      }
+    });
+
+    const ingredients = ingredientList(n);
+    const flagged = {};
+    if (ingredients) {
+      const seen = {};
+      ingredients.forEach(function (ing) {
+        WATCHLIST.forEach(function (w) {
+          if (w.re.test(ing)) {
+            if (flagged[ing] !== 'red') flagged[ing] = w.level;
+            const id = w.why + '|' + ing;
+            if (!seen[id]) {
+              seen[id] = true;
+              reasons.push({ level: w.level, text: 'Ingredient: ' + ing + ' (' + w.why + ')' });
+            }
+          }
+        });
+      });
+    } else {
+      notes.push('Ingredients not available, so they were not checked.');
+      incomplete = true;
+    }
+
+    let level = 'green';
+    if (reasons.some(function (r) { return r.level === 'yellow'; })) level = 'yellow';
+    if (reasons.some(function (r) { return r.level === 'red'; })) level = 'red';
+    return { level: level, reasons: reasons, notes: notes, ingredients: ingredients, flagged: flagged, incomplete: incomplete };
+  }
+
+  function badgesFor(n) {
+    const b = [];
+    const protein = num(n.protein_g), fiber = num(n.dietary_fiber_g);
+    if (protein !== null && protein >= 20) b.push('Excellent protein (' + protein + ' g)');
+    else if (protein !== null && protein >= 10) b.push('Good protein (' + protein + ' g)');
+    if (fiber !== null && fiber >= 3) b.push('Good fiber (' + fiber + ' g)');
+    [['vitamin_d_mcg', 'Vitamin D', 2], ['calcium_mg', 'Calcium', 130],
+     ['iron_mg', 'Iron', 1.8], ['potassium_mg', 'Potassium', 470]].forEach(function (x) {
+      const v = num(n[x[0]]);
+      if (v !== null && v >= x[2]) b.push(x[1] + ' source');
+    });
+    return b;
+  }
+
+  // Which important numbers disagree between database (a) and label (b)?
+  function compareNutrients(a, b) {
+    const diffs = [];
+    COMPARE.forEach(function (c) {
+      const x = num(a[c[0]]), y = num(b[c[0]]);
+      if (x === null || y === null) return;
+      const tol = Math.max(c[3], 0.15 * Math.max(x, y));
+      if (Math.abs(x - y) > tol) diffs.push({ name: c[1], unit: c[2], db: x, label: y });
+    });
+    return diffs;
+  }
+  // ==== PURE END ====
+
+  // ---------- screen elements ----------
+  const scanBtn = document.getElementById('scanBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const wrap = document.getElementById('wrap');
+  const video = document.getElementById('video');
+  const manual = document.getElementById('manual');
   const cam = document.getElementById('cam');
   const thumbs = document.getElementById('thumbs');
   const readBtn = document.getElementById('readBtn');
@@ -131,21 +305,18 @@
   const statusEl = document.getElementById('status');
   const resultEl = document.getElementById('result');
   const keyInput = document.getElementById('keyInput');
-  let photos = [];
+  const verifyNote = document.getElementById('verifyNote');
+  const savedList = document.getElementById('savedList');
 
+  let photos = [];
+  let verifyCode = null;   // barcode we are checking against a label photo
+  let lastDb = {};         // database numbers seen this session, by barcode
+  let current = null;      // what is on screen now
+  let stream = null, detector = null, timer = null, busy = false;
+
+  // ---------- API key ----------
   function getKey() { try { return localStorage.getItem('gemini_key') || ''; } catch (e) { return ''; } }
   if (!getKey()) document.getElementById('keybox').open = true;
-
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-    });
-  }
-  function num(v) {
-    if (typeof v === 'number') return v;
-    if (typeof v === 'string') { const x = parseFloat(v); return isNaN(x) ? null : x; }
-    return null;
-  }
 
   document.getElementById('saveKey').addEventListener('click', function () {
     const k = keyInput.value.trim();
@@ -156,6 +327,206 @@
     statusEl.textContent = 'Key saved on this phone.';
   });
 
+  // ---------- saved (verified) products ----------
+  const STORE_KEY = 'verified_products_v1';
+  function loadSaved() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch (e) { return {}; }
+  }
+  function writeSaved(o) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(o)); return true; } catch (e) { return false; }
+  }
+  function removeSaved(code) {
+    const all = loadSaved();
+    delete all[codeKey(code)];
+    writeSaved(all);
+    renderSaved();
+  }
+  function renderSaved() {
+    const all = loadSaved();
+    const keys = Object.keys(all);
+    document.getElementById('savedSummary').textContent = 'Saved products (' + keys.length + ')';
+    if (!keys.length) {
+      savedList.innerHTML = '<p class="note">Nothing saved yet. Check a product with a label photo, then tap "Remember this product".</p>';
+      return;
+    }
+    savedList.innerHTML = keys.map(function (k) {
+      const s = all[k];
+      const d = s.savedAt ? new Date(s.savedAt).toLocaleDateString() : '';
+      return '<div class="saveditem"><div><b>' + esc(s.name || 'Unnamed product') + '</b><br><span class="note">' +
+        esc(s.code) + ' - ' + esc(d) + '</span></div>' +
+        '<button class="btn gray tiny" data-act="removesaved" data-code="' + esc(s.code) + '">Remove</button></div>';
+    }).join('');
+  }
+  savedList.addEventListener('click', function (ev) {
+    const b = ev.target.closest('button[data-act="removesaved"]');
+    if (!b) return;
+    removeSaved(b.getAttribute('data-code'));
+    statusEl.textContent = 'Removed from saved products.';
+  });
+  renderSaved();
+
+  function saveCurrent() {
+    if (!current || !current.code || current.source !== 'label') return;
+    const name = window.prompt('Name this product (optional):', current.name || '');
+    if (name === null) return;
+    const all = loadSaved();
+    all[codeKey(current.code)] = {
+      code: current.code, name: name.trim(), nutrients: current.nutrients, savedAt: new Date().toISOString()
+    };
+    if (writeSaved(all)) {
+      statusEl.textContent = 'Saved. Next time you scan this barcode, it will use these numbers.';
+      renderSaved();
+    } else {
+      statusEl.textContent = 'Could not save on this phone (browser storage is blocked).';
+    }
+  }
+
+  // ---------- barcode scanning ----------
+  async function initScanner() {
+    if (!('BarcodeDetector' in window)) {
+      scanBtn.style.display = 'none';
+      statusEl.textContent = 'Barcode camera is not available in this browser. Type the digits instead, or use label photos.';
+      return;
+    }
+    try {
+      const supported = await BarcodeDetector.getSupportedFormats();
+      const wanted = ['upc_a', 'upc_e', 'ean_13', 'ean_8'].filter(function (f) { return supported.indexOf(f) !== -1; });
+      if (!wanted.length) { scanBtn.style.display = 'none'; return; }
+      detector = new BarcodeDetector({ formats: wanted });
+    } catch (e) {
+      scanBtn.style.display = 'none';
+    }
+  }
+
+  scanBtn.addEventListener('click', async function () {
+    if (!detector) { statusEl.textContent = 'Barcode reader is not ready yet. Try again in a moment.'; return; }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } }, audio: false
+      });
+      video.srcObject = stream;
+      await video.play();
+      wrap.style.display = 'block';
+      scanBtn.style.display = 'none';
+      stopBtn.style.display = 'block';
+      statusEl.textContent = 'Point the camera at the barcode and hold steady, about 6 to 8 inches away.';
+      timer = setInterval(scan, 300);
+    } catch (e) {
+      statusEl.textContent = (e.name === 'NotAllowedError')
+        ? 'Camera permission was blocked. In Chrome tap the icon at the left of the address bar, then Permissions, then Camera, then Allow.'
+        : 'Camera error: ' + e.name + ' - ' + e.message;
+    }
+  });
+
+  async function scan() {
+    if (busy || !detector || video.readyState < 2) return;
+    busy = true;
+    try {
+      const codes = await detector.detect(video);
+      if (codes.length) {
+        if (navigator.vibrate) navigator.vibrate(120);
+        stopCamera();
+        handleBarcode(codes[0].rawValue);
+      }
+    } catch (e) {
+      statusEl.textContent = 'Scan error: ' + e.message;
+    }
+    busy = false;
+  }
+
+  function stopCamera() {
+    clearInterval(timer);
+    if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+    video.srcObject = null;
+    wrap.style.display = 'none';
+    stopBtn.style.display = 'none';
+    if (detector) { scanBtn.style.display = 'block'; scanBtn.textContent = 'Scan barcode'; }
+  }
+  stopBtn.addEventListener('click', function () { stopCamera(); statusEl.textContent = ''; });
+
+  document.getElementById('manualBtn').addEventListener('click', function () {
+    const code = manual.value.replace(/\D/g, '');
+    if (code.length < 8) { statusEl.textContent = 'Please type the full barcode digits.'; return; }
+    handleBarcode(code);
+  });
+
+  async function fetchProduct(code) {
+    const fields = 'code,product_name,brands,serving_size,serving_quantity,nutriments,ingredients_text,ingredients_text_en';
+    const url = 'https://world.openfoodfacts.org/api/v2/product/' + encodeURIComponent(code) + '.json?fields=' + fields;
+    const ctl = new AbortController();
+    const t = setTimeout(function () { ctl.abort(); }, 20000);
+    try {
+      const r = await fetch(url, { signal: ctl.signal });
+      if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      return (d && d.status === 1 && d.product) ? d.product : null;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  function verifyButton(code, text) {
+    return '<button class="btn" data-act="verify" data-code="' + esc(code) + '">' + esc(text) + '</button>';
+  }
+
+  async function handleBarcode(code) {
+    code = String(code).replace(/\D/g, '');
+    verifyCode = null;
+    verifyNote.textContent = '';
+    resultEl.innerHTML = '';
+
+    const saved = loadSaved()[codeKey(code)];
+    if (saved) {
+      current = { code: code, name: saved.name || '', nutrients: saved.nutrients, source: 'saved', savedAt: saved.savedAt };
+      showResult(current);
+      statusEl.textContent = 'Found in your saved products.';
+      return;
+    }
+
+    statusEl.textContent = 'Looking up ' + code + '...';
+    try {
+      let p = await fetchProduct(code);
+      if (!p && code.length === 12) p = await fetchProduct('0' + code);
+      if (!p) {
+        statusEl.textContent = '';
+        resultEl.innerHTML = '<div class="banner b-warn"><b>Not in the database.</b> Take photos of the label instead. ' +
+          'You can then tap "Remember this product" so this barcode works next time.' +
+          verifyButton(code, 'Read the label with photos') + '</div>';
+        return;
+      }
+      const conv = offToNutrients(p);
+      lastDb[codeKey(code)] = { name: p.product_name || '', nutrients: conv.nutrients };
+      current = { code: code, name: p.product_name || '', nutrients: conv.nutrients, source: 'database', dbNotes: conv.notes };
+      showResult(current);
+      statusEl.textContent = '';
+    } catch (err) {
+      statusEl.textContent = '';
+      const text = (err.name === 'AbortError') ? 'timed out' : err.message;
+      resultEl.innerHTML = '<div class="banner b-bad"><b>Could not reach the database</b> (' + esc(text) + '). Use label photos instead.' +
+        verifyButton(code, 'Read the label with photos') + '</div>';
+    }
+  }
+
+  function startVerify(code) {
+    verifyCode = code;
+    photos = [];
+    renderThumbs();
+    verifyNote.textContent = 'Checking barcode ' + code + ': add a photo of the Nutrition Facts panel, then one of the ingredients.';
+    statusEl.textContent = '';
+    document.getElementById('photoSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  resultEl.addEventListener('click', function (ev) {
+    const b = ev.target.closest('button[data-act]');
+    if (!b) return;
+    const act = b.getAttribute('data-act');
+    const code = b.getAttribute('data-code') || (current && current.code) || '';
+    if (act === 'verify') startVerify(code);
+    else if (act === 'save') saveCurrent();
+    else if (act === 'remove') { removeSaved(code); resultEl.innerHTML = ''; statusEl.textContent = 'Removed from saved products.'; }
+  });
+
+  // ---------- label photos ----------
   function renderThumbs() {
     thumbs.innerHTML = '';
     photos.forEach(function (p) {
@@ -205,6 +576,19 @@
     });
   }
 
+  const PROMPT =
+    'You are reading a food product from one to three photos of the SAME product. ' +
+    'The photos may show the US Nutrition Facts label, the ingredients list, or both. ' +
+    'Return ONLY a JSON object with exactly these keys: serving_size (string, as printed), ' +
+    'servings_per_container (number or string), calories, total_fat_g, saturated_fat_g, trans_fat_g, ' +
+    'polyunsaturated_fat_g, monounsaturated_fat_g, cholesterol_mg, sodium_mg, total_carbohydrate_g, ' +
+    'dietary_fiber_g, total_sugars_g, added_sugars_g, protein_g, vitamin_d_mcg, calcium_mg, iron_mg, ' +
+    'potassium_mg, ingredients. All nutrient values are numbers per ONE serving, in the unit named by the key. ' +
+    'If a nutrient is not printed, use null. Do not guess or calculate missing values. ' +
+    '"ingredients" is an array of strings, one per ingredient exactly as printed, in order ' +
+    '(split on commas; list ingredients inside parentheses as their own items). ' +
+    'If no ingredients list is visible in any photo, use null for ingredients.';
+
   readBtn.addEventListener('click', async function () {
     const key = getKey();
     if (!key) { statusEl.textContent = 'Open "API key setup" and save your key first.'; document.getElementById('keybox').open = true; return; }
@@ -214,7 +598,7 @@
     resultEl.innerHTML = '';
     let secs = 0;
     statusEl.textContent = 'Checking product... 0s';
-    const timer = setInterval(function () { secs++; statusEl.textContent = 'Checking product... ' + secs + 's'; }, 1000);
+    const timerId = setInterval(function () { secs++; statusEl.textContent = 'Checking product... ' + secs + 's'; }, 1000);
     const controller = new AbortController();
     const killer = setTimeout(function () { controller.abort(); }, 90000);
 
@@ -237,81 +621,93 @@
       if (!resp.ok) throw new Error((data.error && data.error.message) || ('HTTP ' + resp.status));
       const text = data.candidates[0].content.parts.map(function (p) { return p.text || ''; }).join('');
       const n = JSON.parse(text);
-      showResult(n);
+
+      const ctx = { code: verifyCode, name: '', nutrients: n, source: 'label' };
+      if (verifyCode) {
+        const db = lastDb[codeKey(verifyCode)];
+        if (db) { ctx.name = db.name; ctx.mismatches = compareNutrients(db.nutrients, n); }
+      }
+      current = ctx;
+      showResult(ctx);
       statusEl.textContent = 'Done in ' + secs + 's. Compare with the real package if anything looks odd.';
     } catch (err) {
       statusEl.textContent = (err.name === 'AbortError')
         ? 'Timed out after 90 seconds. Try again.'
         : 'Error: ' + err.message;
     }
-    clearInterval(timer);
+    clearInterval(timerId);
     clearTimeout(killer);
     readBtn.disabled = false;
   });
 
-  function evaluate(n) {
-    const reasons = [];
-    const notes = [];
+  // ---------- showing the verdict ----------
+  function keyNumbersTable(n) {
+    const rows = [
+      ['Serving size', n.serving_size ? esc(n.serving_size) : '<span class="missing">missing</span>'],
+      ['Calories', fmt(n.calories, '')],
+      ['Saturated fat', fmt(n.saturated_fat_g, ' g')],
+      ['Trans fat', fmt(n.trans_fat_g, ' g')],
+      ['Sodium', fmt(n.sodium_mg, ' mg')],
+      ['Added sugars', fmt(n.added_sugars_g, ' g')],
+      ['Cholesterol', fmt(n.cholesterol_mg, ' mg')]
+    ];
+    return '<table>' + rows.map(function (r) { return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>'; }).join('') + '</table>';
+  }
 
-    RULES.forEach(function (r) {
-      const v = num(n[r.key]);
-      if (v === null) { notes.push(r.name + ' not found on the photos'); return; }
-      if (r.red !== null && v > r.red) {
-        reasons.push({ level: 'red', text: r.name + ': ' + v + ' ' + r.unit + ' (limit ' + r.red + ' ' + r.unit + ')' });
-      } else if (r.yellow !== null && v > r.yellow) {
-        reasons.push({ level: 'yellow', text: r.name + ': ' + v + ' ' + r.unit + ' (watch above ' + r.yellow + ' ' + r.unit + ')' });
-      }
-    });
-
-    const ingredients = Array.isArray(n.ingredients) ? n.ingredients.map(String) : null;
-    const flagged = {};   // ingredient text -> level
-    if (ingredients) {
-      const seen = {};
-      ingredients.forEach(function (ing) {
-        WATCHLIST.forEach(function (w) {
-          if (w.re.test(ing)) {
-            if (flagged[ing] !== 'red') flagged[ing] = w.level;
-            const id = w.why + '|' + ing;
-            if (!seen[id]) {
-              seen[id] = true;
-              reasons.push({ level: w.level, text: 'Ingredient: ' + ing + ' (' + w.why + ')' });
-            }
-          }
-        });
-      });
-    } else {
-      notes.push('Ingredients not checked. Add a photo of the ingredients list.');
+  function bannerFor(ctx) {
+    const n = ctx.nutrients;
+    if (ctx.source === 'database') {
+      let h = '<div class="banner b-warn"><b>UNVERIFIED.</b> These numbers come from the Open Food Facts database, ' +
+        'which volunteers fill in and which can be wrong. Compare these with the package, or check the label.' +
+        (ctx.name ? '<br>Product: <b>' + esc(ctx.name) + '</b>' : '') +
+        keyNumbersTable(n);
+      (ctx.dbNotes || []).forEach(function (x) { h += '<div class="note">' + esc(x) + '</div>'; });
+      h += verifyButton(ctx.code, 'Verify with label photo') + '</div>';
+      return h;
     }
-
-    let level = 'green';
-    if (reasons.some(function (r) { return r.level === 'yellow'; })) level = 'yellow';
-    if (reasons.some(function (r) { return r.level === 'red'; })) level = 'red';
-    return { level: level, reasons: reasons, notes: notes, ingredients: ingredients, flagged: flagged };
+    if (ctx.source === 'saved') {
+      const d = ctx.savedAt ? new Date(ctx.savedAt).toLocaleDateString() : '';
+      return '<div class="banner b-ok"><b>Verified by you</b>' + (d ? ' on ' + esc(d) : '') +
+        (ctx.name ? '<br>Product: <b>' + esc(ctx.name) + '</b>' : '') +
+        '<br>These numbers were read from the package label and saved on this phone.' +
+        verifyButton(ctx.code, 'Re-check with label photo') +
+        '<button class="btn gray" data-act="remove" data-code="' + esc(ctx.code) + '">Remove from saved products</button></div>';
+    }
+    if (ctx.source === 'label' && ctx.code) {
+      let h = '';
+      if (ctx.mismatches && ctx.mismatches.length) {
+        h += '<div class="banner b-bad"><b>The database numbers did NOT match the label.</b> The verdict above uses the label.<ul>';
+        ctx.mismatches.forEach(function (d) {
+          h += '<li>' + esc(d.name) + ': database ' + esc(d.db) + d.unit + ' vs label ' + esc(d.label) + d.unit + '</li>';
+        });
+        h += '</ul></div>';
+      } else if (ctx.mismatches) {
+        h += '<div class="banner b-ok"><b>The label matches the database</b> on the key numbers.</div>';
+      }
+      h += '<div class="banner b-warn">Only tap below if the numbers on this screen match the package.' +
+        '<button class="btn green" data-act="save">Remember this product</button></div>';
+      return h;
+    }
+    return '';
   }
 
-  function badgesFor(n) {
-    const b = [];
-    const protein = num(n.protein_g), fiber = num(n.dietary_fiber_g);
-    if (protein !== null && protein >= 20) b.push('Excellent protein (' + protein + ' g)');
-    else if (protein !== null && protein >= 10) b.push('Good protein (' + protein + ' g)');
-    if (fiber !== null && fiber >= 3) b.push('Good fiber (' + fiber + ' g)');
-    [['vitamin_d_mcg', 'Vitamin D', 2], ['calcium_mg', 'Calcium', 130],
-     ['iron_mg', 'Iron', 1.8], ['potassium_mg', 'Potassium', 470]].forEach(function (x) {
-      const v = num(n[x[0]]);
-      if (v !== null && v >= x[2]) b.push(x[1] + ' source');
-    });
-    return b;
-  }
-
-  function showResult(n) {
+  function showResult(ctx) {
+    const n = ctx.nutrients;
     const e = evaluate(n);
     const label = { green: 'GOOD', yellow: 'OK - WATCH', red: 'NOT GOOD' }[e.level];
     const badges = badgesFor(n);
     const protein = num(n.protein_g), fiber = num(n.dietary_fiber_g);
     const star = e.level === 'green' && ((protein !== null && protein >= 10) || (fiber !== null && fiber >= 3));
 
+    let small = '';
+    if (ctx.source === 'database') small = 'unverified - from database' + (e.incomplete ? ' - incomplete data' : '');
+    else if (ctx.source === 'saved') small = 'verified by you';
+    else if (!e.ingredients) small = 'nutrients only - ingredients not checked';
+
     let html = '<div class="verdict v-' + e.level + '">' + (star ? '&#11088; ' : '') + label +
-      (e.ingredients ? '' : '<small>nutrients only - ingredients not checked</small>') + '</div>';
+      (small ? '<small>' + esc(small) + '</small>' : '') + '</div>';
+
+    html += bannerFor(ctx);
 
     if (e.reasons.length) {
       html += '<h3>Why</h3><ul>';
@@ -346,6 +742,8 @@
 
     resultEl.innerHTML = html;
   }
+
+  initScanner();
 </script>
 </body>
 </html>
