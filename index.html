@@ -291,7 +291,7 @@
     if (protein !== null && protein >= 20) b.push('Excellent protein (' + protein + ' g)');
     else if (protein !== null && protein >= 10) b.push('Good protein (' + protein + ' g)');
     if (fiber !== null && fiber >= 3) b.push('Good fiber (' + fiber + ' g)');
-    [['vitamin_d_mcg', 'Vitamin D', 4], ['calcium_mg', 'Calcium', 130],
+    [['vitamin_d_mcg', 'Vitamin D', 2], ['calcium_mg', 'Calcium', 130],
      ['iron_mg', 'Iron', 1.8], ['potassium_mg', 'Potassium', 470]].forEach(function (x) {
       const v = num(n[x[0]]);
       if (v !== null && v >= x[2]) b.push(x[1] + ' source');
