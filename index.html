@@ -106,6 +106,7 @@
   <details id="backupBox">
     <summary id="backupSummary">Backup &amp; restore</summary>
     <p class="note" id="backupInfo"></p>
+    <p class="note" id="backupMsg" style="font-weight:bold;color:#1a1a1a"></p>
     <button class="btn" id="exportBtn">Save backup file</button>
     <button class="btn gray" id="shareBtn" style="display:none">Share backup (Drive, email, Keep...)</button>
     <button class="btn gray" id="copyBtn">Copy backup as text</button>
@@ -436,6 +437,12 @@
     statusEl.textContent = 'Removed from saved products.';
   });
   // ---------- backup / restore ----------
+  // Show messages right inside the backup section (and at the top too)
+  function say(msg) {
+    statusEl.textContent = msg;
+    const m = document.getElementById('backupMsg');
+    if (m) m.textContent = msg;
+  }
   const BACKUP_TIME_KEY = 'last_backup_at';
   function getLastBackup() { try { return localStorage.getItem(BACKUP_TIME_KEY) || ''; } catch (e) { return ''; } }
   function markBackedUp() { try { localStorage.setItem(BACKUP_TIME_KEY, new Date().toISOString()); } catch (e) {} renderSaved(); }
@@ -458,7 +465,7 @@
   function backupName() { return 'label-check-backup-' + new Date().toISOString().slice(0, 10) + '.json'; }
   function hasProducts() {
     if (Object.keys(loadSaved()).length) return true;
-    statusEl.textContent = 'Nothing saved yet, so there is nothing to back up.';
+    say('Nothing saved yet, so there is nothing to back up.');
     return false;
   }
 
@@ -471,7 +478,7 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
     markBackedUp();
-    statusEl.textContent = 'Backup file saved to your phone (Downloads folder). Copy it somewhere safe, like Google Drive or your NAS.';
+    say('Backup file saved to your phone (Downloads folder). Copy it somewhere safe, like Google Drive or your NAS.');
   });
 
   document.getElementById('copyBtn').addEventListener('click', async function () {
@@ -480,13 +487,13 @@
     try {
       await navigator.clipboard.writeText(text);
       markBackedUp();
-      statusEl.textContent = 'Backup copied. Paste it into a note, email or message to yourself.';
+      say('Backup copied. Paste it into a note, email or message to yourself.');
     } catch (e) {
       const box = document.getElementById('pasteBox');
       box.value = text;
       box.closest('details').open = true;
       box.focus(); box.select();
-      statusEl.textContent = 'Could not copy automatically. The text is in the box below: select all, copy it, and keep it safe.';
+      say('Could not copy automatically. The text is in the box below: select all, copy it, and keep it safe.');
     }
   });
 
@@ -499,25 +506,39 @@
   } catch (e) {}
   shareBtn.addEventListener('click', async function () {
     if (!hasProducts()) return;
+    say('Opening share...');
+    const text = backupText();
+    let fileError = '';
     try {
-      const file = new File([backupText()], backupName(), { type: 'application/json' });
+      const file = new File([text], backupName(), { type: 'application/json' });
       await navigator.share({ files: [file], title: 'Label Check backup' });
       markBackedUp();
-      statusEl.textContent = 'Backup shared.';
+      say('Backup shared.');
+      return;
     } catch (e) {
-      if (e && e.name !== 'AbortError') statusEl.textContent = 'Could not share: ' + e.message + '. Try "Save backup file" instead.';
+      if (e && e.name === 'AbortError') { say('Share cancelled.'); return; }
+      fileError = (e && e.name ? e.name : 'error') + (e && e.message ? ': ' + e.message : '');
+    }
+    // Fallback: share the backup as plain text instead of a file
+    try {
+      await navigator.share({ title: 'Label Check backup', text: text });
+      markBackedUp();
+      say('Backup shared as text. To restore later, use "Or paste backup text".');
+    } catch (e2) {
+      if (e2 && e2.name === 'AbortError') { say('Share cancelled.'); return; }
+      say('Sharing did not work on this phone (' + fileError + '). Use "Save backup file" or "Copy backup as text" instead.');
     }
   });
 
   function restoreFromText(text) {
     const r = parseBackup(text);
-    if (!r.ok) { statusEl.textContent = r.error; return; }
+    if (!r.ok) { say(r.error); return; }
     const m = mergeProducts(loadSaved(), r.products);
-    if (!writeSaved(m.merged)) { statusEl.textContent = 'Could not save on this phone (browser storage is blocked).'; return; }
+    if (!writeSaved(m.merged)) { say('Could not save on this phone (browser storage is blocked).'); return; }
     renderSaved();
     let msg = 'Restored. Added ' + m.added + ', updated ' + m.updated + ', kept ' + m.kept + ' you already had.';
     if (r.skipped) msg += ' Skipped ' + r.skipped + ' damaged entr' + (r.skipped === 1 ? 'y' : 'ies') + '.';
-    statusEl.textContent = msg;
+    say(msg);
   }
 
   document.getElementById('importFile').addEventListener('change', function (ev) {
@@ -525,14 +546,14 @@
     if (!f) return;
     const reader = new FileReader();
     reader.onload = function () { restoreFromText(reader.result); };
-    reader.onerror = function () { statusEl.textContent = 'Could not read that file.'; };
+    reader.onerror = function () { say('Could not read that file.'); };
     reader.readAsText(f);
     ev.target.value = '';
   });
 
   document.getElementById('pasteBtn').addEventListener('click', function () {
     const box = document.getElementById('pasteBox');
-    if (!box.value.trim()) { statusEl.textContent = 'Paste the backup text into the box first.'; return; }
+    if (!box.value.trim()) { say('Paste the backup text into the box first.'); return; }
     restoreFromText(box.value);
     box.value = '';
   });
