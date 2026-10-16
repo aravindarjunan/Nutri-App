@@ -129,6 +129,11 @@
     <summary id="backupSummary">Backup &amp; restore</summary>
     <p class="note" id="backupInfo"></p>
     <p class="note" id="backupMsg" style="font-weight:bold;color:#1a1a1a"></p>
+    <label style="display:flex;gap:10px;align-items:flex-start;margin:10px 0;font-size:15px;cursor:pointer">
+      <input type="checkbox" id="autoBackup" style="width:22px;height:22px;flex:none;margin:0">
+      <span>Automatically save a backup file after each "Remember this product"
+        <span class="note" style="display:block">The file goes to your phone's Downloads folder. Chrome may ask once to allow multiple downloads: tap Allow.</span></span>
+    </label>
     <button class="btn" id="exportBtn">Save backup file</button>
     <button class="btn gray" id="shareBtn" style="display:none">Share backup (Drive, email, Keep...)</button>
     <button class="btn gray" id="copyBtn">Copy backup as text</button>
@@ -669,8 +674,7 @@
     return false;
   }
 
-  document.getElementById('exportBtn').addEventListener('click', function () {
-    if (!hasProducts()) return;
+  function downloadBackupFile() {
     const blob = new Blob([backupText()], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -678,7 +682,24 @@
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
     markBackedUp();
+  }
+
+  document.getElementById('exportBtn').addEventListener('click', function () {
+    if (!hasProducts()) return;
+    downloadBackupFile();
     say('Backup file saved to your phone (Downloads folder). Copy it somewhere safe, like Google Drive or your NAS.');
+  });
+
+  // Automatic backup file after each "Remember this product" (off unless you switch it on)
+  const AUTO_KEY = 'auto_backup';
+  function autoBackupOn() { try { return localStorage.getItem(AUTO_KEY) === '1'; } catch (e) { return false; } }
+  const autoBox = document.getElementById('autoBackup');
+  autoBox.checked = autoBackupOn();
+  autoBox.addEventListener('change', function () {
+    try { localStorage.setItem(AUTO_KEY, autoBox.checked ? '1' : '0'); } catch (e) {}
+    say(autoBox.checked
+      ? 'Automatic backup is ON. A backup file will be saved after each "Remember this product".'
+      : 'Automatic backup is OFF.');
   });
 
   document.getElementById('copyBtn').addEventListener('click', async function () {
@@ -774,6 +795,10 @@
     if (writeSaved(all)) {
       statusEl.textContent = 'Saved. Next time you scan this barcode, it will use these numbers.';
       renderSaved();
+      if (autoBackupOn()) {
+        try { downloadBackupFile(); statusEl.textContent += ' A backup file was also saved to Downloads.'; }
+        catch (e) { statusEl.textContent += ' (Automatic backup file could not be saved.)'; }
+      }
     } else {
       statusEl.textContent = 'Could not save on this phone (browser storage is blocked).';
     }
