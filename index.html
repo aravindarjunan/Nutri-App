@@ -62,8 +62,25 @@
   details { margin: 8px 0; }
   textarea { width: 100%; box-sizing: border-box; font-size: 14px; padding: 8px; margin-top: 8px; }
   label.btn { cursor: pointer; }
-  .saveditem { display: flex; justify-content: space-between; align-items: center; gap: 8px;
-               padding: 8px 0; border-bottom: 1px solid #ddd; }
+  .saveditem { display: flex; align-items: center; gap: 10px; padding: 10px 0 10px 8px; margin-top: 6px;
+               border-bottom: 1px solid #ddd; border-left: 6px solid #ccc; cursor: pointer; }
+  .saveditem.lv-green { border-left-color: #188038; }
+  .saveditem.lv-yellow { border-left-color: #f2b600; }
+  .saveditem.lv-red { border-left-color: #c5221f; }
+  .saveditem .info { flex: 1; min-width: 0; }
+  .saveditem .nm { font-weight: bold; font-size: 15px; word-break: break-word; }
+  .thumb { width: 56px; height: 56px; flex: none; border-radius: 8px; background: #eee; border: 1px solid #ccc;
+           overflow: hidden; display: flex; align-items: center; justify-content: center;
+           color: #666; font-size: 11px; text-align: center; line-height: 1.2; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .chip { display: inline-block; border-radius: 10px; padding: 2px 8px; font-size: 12px; font-weight: bold;
+          color: #fff; margin-bottom: 3px; }
+  .chip.green { background: #188038; }
+  .chip.yellow { background: #f2b600; color: #222; }
+  .chip.red { background: #c5221f; }
+  .filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .fbtn { border: 1px solid #bbb; background: #fff; border-radius: 16px; padding: 6px 12px; font-size: 14px; cursor: pointer; }
+  .fbtn.on { background: #1a73e8; color: #fff; border-color: #1a73e8; }
 </style>
 </head>
 <body>
@@ -102,6 +119,7 @@
     <summary id="savedSummary">Saved products (0)</summary>
     <div id="savedList"></div>
   </details>
+  <input id="thumbCam" type="file" accept="image/*" capture="environment" style="display:none">
 
   <details id="backupBox">
     <summary id="backupSummary">Backup &amp; restore</summary>
@@ -336,7 +354,8 @@
         code: String(s.code).replace(/\D/g, ''),
         name: typeof s.name === 'string' ? s.name : '',
         nutrients: s.nutrients,
-        savedAt: typeof s.savedAt === 'string' ? s.savedAt : ''
+        savedAt: typeof s.savedAt === 'string' ? s.savedAt : '',
+        image: safeImage(s.image)
       };
     });
     return { ok: true, products: clean, skipped: skipped };
@@ -361,6 +380,30 @@
   function unbackedCount(all, lastBackupIso) {
     const t = Date.parse(lastBackupIso) || 0;
     return Object.keys(all).filter(function (k) { return (Date.parse(all[k].savedAt) || 0) > t; }).length;
+  }
+
+  // ----- saved list helpers (pure) -----
+  // Only allow https pictures or a small embedded JPEG
+  function safeImage(u) {
+    if (typeof u !== 'string' || u.length > 100000) return '';
+    if (/^https:\/\//i.test(u)) return u;
+    if (/^data:image\/jpeg;base64,[A-Za-z0-9+\/=]+$/.test(u)) return u;
+    return '';
+  }
+  function levelLabel(l) { return { green: 'GOOD', yellow: 'WATCH', red: 'NOT GOOD' }[l]; }
+
+  // One row per saved product with its verdict, worked out fresh from your current rules
+  function summarizeSaved(all) {
+    return Object.keys(all).map(function (k) {
+      const s = all[k];
+      const n = s.nutrients || {};
+      const e = evaluate(n);
+      const worst = e.reasons.filter(function (r) { return r.level === e.level; });
+      const protein = num(n.protein_g), fiber = num(n.dietary_fiber_g);
+      const star = e.level === 'green' && ((protein !== null && protein >= 10) || (fiber !== null && fiber >= 3));
+      const reason = worst.length ? worst[0].text + (worst.length > 1 ? ' (+' + (worst.length - 1) + ' more)' : '') : '';
+      return { key: k, s: s, level: e.level, star: star, reason: reason };
+    }).sort(function (a, b) { return (Date.parse(b.s.savedAt) || 0) - (Date.parse(a.s.savedAt) || 0); });
   }
   // ==== PURE END ====
 
@@ -413,29 +456,120 @@
     writeSaved(all);
     renderSaved();
   }
+  let savedFilter = 'all';
+  let pendingThumbKey = null;
+  const thumbCam = document.getElementById('thumbCam');
+
   function renderSaved() {
     const all = loadSaved();
-    const keys = Object.keys(all);
-    document.getElementById('savedSummary').textContent = 'Saved products (' + keys.length + ')';
+    const rows = summarizeSaved(all);
+    document.getElementById('savedSummary').textContent = 'Saved products (' + rows.length + ')';
     renderBackupInfo(all);
-    if (!keys.length) {
+    if (!rows.length) {
       savedList.innerHTML = '<p class="note">Nothing saved yet. Check a product with a label photo, then tap "Remember this product".</p>';
       return;
     }
-    savedList.innerHTML = keys.map(function (k) {
-      const s = all[k];
+    const counts = { green: 0, yellow: 0, red: 0 };
+    rows.forEach(function (r) { counts[r.level]++; });
+    if (savedFilter !== 'all' && !counts[savedFilter]) savedFilter = 'all';
+    const fb = [['all', 'All', rows.length], ['green', 'Good', counts.green],
+                ['yellow', 'Watch', counts.yellow], ['red', 'Not good', counts.red]];
+    let html = '<div class="filters">' + fb.map(function (f) {
+      return '<button class="fbtn' + (savedFilter === f[0] ? ' on' : '') + '" data-filter="' + f[0] + '">' +
+        f[1] + ' (' + f[2] + ')</button>';
+    }).join('') + '</div>';
+    html += '<p class="note">Tap a product to see its full verdict.</p>';
+    rows.filter(function (r) { return savedFilter === 'all' || r.level === savedFilter; }).forEach(function (r) {
+      const s = r.s;
       const d = s.savedAt ? new Date(s.savedAt).toLocaleDateString() : '';
-      return '<div class="saveditem"><div><b>' + esc(s.name || 'Unnamed product') + '</b><br><span class="note">' +
-        esc(s.code) + ' - ' + esc(d) + '</span></div>' +
-        '<button class="btn gray tiny" data-act="removesaved" data-code="' + esc(s.code) + '">Remove</button></div>';
-    }).join('');
+      const img = safeImage(s.image);
+      const thumb = img
+        ? '<div class="thumb"><img src="' + esc(img) + '" alt="" referrerpolicy="no-referrer"></div>'
+        : '<div class="thumb" data-act="thumb" data-key="' + esc(r.key) + '">+ photo</div>';
+      html += '<div class="saveditem lv-' + r.level + '" data-key="' + esc(r.key) + '">' + thumb +
+        '<div class="info"><span class="chip ' + r.level + '">' + (r.star ? '&#11088; ' : '') + levelLabel(r.level) + '</span>' +
+        '<div class="nm">' + esc(s.name || 'Unnamed product') + '</div>' +
+        '<div class="note">' + (r.reason ? esc(r.reason) + '<br>' : '') + esc(s.code) + ' - ' + esc(d) + '</div></div>' +
+        '<button class="btn gray tiny" data-act="removesaved" data-key="' + esc(r.key) + '">Remove</button></div>';
+    });
+    savedList.innerHTML = html;
   }
+
+  function openSaved(key) {
+    const s = loadSaved()[key];
+    if (!s) return;
+    verifyCode = null;
+    verifyNote.textContent = '';
+    current = { code: s.code, name: s.name || '', nutrients: s.nutrients, source: 'saved', savedAt: s.savedAt };
+    showResult(current);
+    statusEl.textContent = 'Showing a saved product.';
+    resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   savedList.addEventListener('click', function (ev) {
-    const b = ev.target.closest('button[data-act="removesaved"]');
-    if (!b) return;
-    removeSaved(b.getAttribute('data-code'));
-    statusEl.textContent = 'Removed from saved products.';
+    const t = ev.target;
+    const f = t.closest('button[data-filter]');
+    if (f) { savedFilter = f.getAttribute('data-filter'); renderSaved(); return; }
+    const rm = t.closest('button[data-act="removesaved"]');
+    if (rm) {
+      const k = rm.getAttribute('data-key');
+      const s = loadSaved()[k];
+      if (window.confirm('Remove "' + ((s && s.name) || 'this product') + '" from saved products?')) {
+        removeSaved(k);
+        statusEl.textContent = 'Removed from saved products.';
+      }
+      return;
+    }
+    const th = t.closest('[data-act="thumb"]');
+    if (th) { pendingThumbKey = th.getAttribute('data-key'); thumbCam.click(); return; }
+    const row = t.closest('.saveditem');
+    if (row) openSaved(row.getAttribute('data-key'));
   });
+  // If a picture fails to load, show the "+ photo" button instead
+  savedList.addEventListener('error', function (ev) {
+    const img = ev.target;
+    if (img && img.tagName === 'IMG') {
+      const row = img.closest('.saveditem');
+      const box = img.parentNode;
+      box.setAttribute('data-act', 'thumb');
+      box.setAttribute('data-key', row ? row.getAttribute('data-key') : '');
+      box.textContent = '+ photo';
+    }
+  }, true);
+
+  // Small square picture of the front of the package, kept on the phone
+  function makeThumb(file) {
+    return new Promise(function (resolve, reject) {
+      const img = new Image();
+      const u = URL.createObjectURL(file);
+      img.onload = function () {
+        const side = Math.min(img.width, img.height);
+        const c = document.createElement('canvas');
+        c.width = 160; c.height = 160;
+        c.getContext('2d').drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, 160, 160);
+        URL.revokeObjectURL(u);
+        resolve(c.toDataURL('image/jpeg', 0.7));
+      };
+      img.onerror = function () { URL.revokeObjectURL(u); reject(new Error('picture')); };
+      img.src = u;
+    });
+  }
+  thumbCam.addEventListener('change', async function () {
+    const f = thumbCam.files[0];
+    thumbCam.value = '';
+    if (!f || !pendingThumbKey) return;
+    try {
+      const data = await makeThumb(f);
+      const all = loadSaved();
+      if (all[pendingThumbKey]) {
+        all[pendingThumbKey].image = data;
+        if (writeSaved(all)) { renderSaved(); statusEl.textContent = 'Picture added.'; }
+        else statusEl.textContent = 'Could not save the picture (browser storage is blocked).';
+      }
+    } catch (e) { statusEl.textContent = 'Could not read that picture.'; }
+    pendingThumbKey = null;
+  });
+
   // ---------- backup / restore ----------
   // Show messages right inside the backup section (and at the top too)
   function say(msg) {
@@ -565,8 +699,11 @@
     const name = window.prompt('Name this product (optional):', current.name || '');
     if (name === null) return;
     const all = loadSaved();
+    const prev = all[codeKey(current.code)];
+    const db = lastDb[codeKey(current.code)];
     all[codeKey(current.code)] = {
-      code: current.code, name: name.trim(), nutrients: current.nutrients, savedAt: new Date().toISOString()
+      code: current.code, name: name.trim(), nutrients: current.nutrients, savedAt: new Date().toISOString(),
+      image: (prev && prev.image) || (db && db.image) || ''
     };
     if (writeSaved(all)) {
       statusEl.textContent = 'Saved. Next time you scan this barcode, it will use these numbers.';
@@ -646,7 +783,7 @@
   });
 
   async function fetchProduct(code) {
-    const fields = 'code,product_name,brands,serving_size,serving_quantity,nutriments,ingredients_text,ingredients_text_en';
+    const fields = 'code,product_name,brands,serving_size,serving_quantity,nutriments,ingredients_text,ingredients_text_en,image_front_small_url';
     const url = 'https://world.openfoodfacts.org/api/v2/product/' + encodeURIComponent(code) + '.json?fields=' + fields;
     const ctl = new AbortController();
     const t = setTimeout(function () { ctl.abort(); }, 20000);
@@ -690,7 +827,7 @@
         return;
       }
       const conv = offToNutrients(p);
-      lastDb[codeKey(code)] = { name: p.product_name || '', nutrients: conv.nutrients };
+      lastDb[codeKey(code)] = { name: p.product_name || '', nutrients: conv.nutrients, image: safeImage(p.image_front_small_url || '') };
       current = { code: code, name: p.product_name || '', nutrients: conv.nutrients, source: 'database', dbNotes: conv.notes };
       showResult(current);
       statusEl.textContent = '';
