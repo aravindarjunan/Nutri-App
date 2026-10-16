@@ -1,6 +1,6 @@
 {
-  "name": "Label Check",
-  "short_name": "Label Check",
+  "name": "Nutri Label Check",
+  "short_name": "Nutri Label Check",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
