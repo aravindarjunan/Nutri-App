@@ -3,14 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Label Check</title>
+<title>Nutri Label Check</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#FFF1B8">
 <style>
-  body { font-family: sans-serif; padding: 16px; margin: 0 auto; max-width: 480px; }
+  body { font-family: sans-serif; padding: 16px 16px 100px; margin: 0 auto; max-width: 480px; }
   h1 { text-align: center; margin: 0 0 12px; }
+  h2 { margin: 14px 0 6px; font-size: 20px; }
+  .tabpanel[hidden] { display: none; }
+  #tabbar { position: fixed; left: 0; right: 0; bottom: 0; background: #FFF1B8; border-top: 1px solid #e0cf8a;
+            padding-bottom: env(safe-area-inset-bottom); z-index: 30; }
+  #tabbar .inner { display: flex; max-width: 480px; margin: 0 auto; }
+  #tabbar .tab { flex: 1; background: none; border: none; padding: 8px 0 7px; font-size: 12px; color: #555;
+                 cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  #tabbar .tab .ti { font-size: 22px; line-height: 1; opacity: .65; }
+  #tabbar .tab.on { color: #1a73e8; font-weight: bold; }
+  #tabbar .tab.on .ti { opacity: 1; }
+  #moreDot { display: none; width: 8px; height: 8px; background: #c5221f; border-radius: 50%;
+             margin-left: 4px; vertical-align: middle; }
   .btn { display: block; text-align: center; font-size: 18px; padding: 14px; margin: 10px 0;
          border-radius: 12px; background: #1a73e8; color: #fff; border: none; width: 100%;
          cursor: pointer; box-sizing: border-box; }
@@ -30,7 +42,11 @@
   #verifyNote { text-align: center; color: #8a5a00; font-size: 14px; margin: 6px 0; }
   #thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
   #thumbs img { width: 30%; border-radius: 8px; border: 1px solid #ccc; }
-  #status { text-align: center; color: #555; margin: 10px 0; }
+  #status { display: none; position: fixed; left: 12px; right: 12px; bottom: calc(76px + env(safe-area-inset-bottom));
+            max-width: 456px; margin: 0 auto; background: #333; color: #fff; padding: 10px 14px;
+            border-radius: 10px; font-size: 14px; line-height: 1.4; z-index: 40; cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+  #status::after { content: "  \2715"; opacity: .6; }
   .verdict { border-radius: 14px; padding: 18px; text-align: center; color: #fff;
              font-size: 28px; font-weight: bold; margin-top: 12px; }
   .verdict small { display: block; font-size: 13px; font-weight: normal; margin-top: 6px; }
@@ -84,49 +100,66 @@
 </style>
 </head>
 <body>
-  <h1>Label Check</h1>
+  <h1>Nutri Label Check</h1>
+  <p id="status" role="status"></p>
 
-  <details id="keybox">
-    <summary>API key setup</summary>
-    <p style="font-size:14px">Paste your Gemini key once. It is stored only on this phone.</p>
-    <input id="keyInput" type="password" placeholder="Paste API key here">
-    <button class="btn gray" id="saveKey">Save key</button>
-  </details>
+  <!-- ===== SCAN TAB ===== -->
+  <section class="tabpanel" id="panel-scan">
+    <button class="btn" id="scanBtn">Scan barcode</button>
+    <div id="wrap"><video id="video" playsinline muted></video><div id="box"></div></div>
+    <button class="btn gray" id="stopBtn" style="display:none">Stop camera</button>
+    <details>
+      <summary>Type barcode digits instead</summary>
+      <div class="row">
+        <input id="manual" inputmode="numeric" placeholder="barcode digits">
+        <button class="btn" id="manualBtn">Look up</button>
+      </div>
+    </details>
 
-  <button class="btn" id="scanBtn">Scan barcode</button>
-  <div id="wrap"><video id="video" playsinline muted></video><div id="box"></div></div>
-  <button class="btn gray" id="stopBtn" style="display:none">Stop camera</button>
-  <details>
-    <summary>Type barcode digits instead</summary>
-    <div class="row">
-      <input id="manual" inputmode="numeric" placeholder="barcode digits">
-      <button class="btn" id="manualBtn">Look up</button>
-    </div>
-  </details>
+    <div class="divider">or read the label with photos</div>
+    <p id="verifyNote"></p>
+    <label class="btn" id="photoSection" for="cam">Add photo (nutrition panel, then ingredients)</label>
+    <input id="cam" type="file" accept="image/*" capture="environment" style="display:none">
+    <div id="thumbs"></div>
+    <button class="btn gray" id="clearBtn" style="display:none">Clear photos</button>
+    <button class="btn green" id="readBtn" style="display:none">Check product</button>
 
-  <div class="divider">or read the label with photos</div>
-  <p id="verifyNote"></p>
-  <label class="btn" id="photoSection" for="cam">Add photo (nutrition panel, then ingredients)</label>
-  <input id="cam" type="file" accept="image/*" capture="environment" style="display:none">
-  <div id="thumbs"></div>
-  <button class="btn gray" id="clearBtn" style="display:none">Clear photos</button>
-  <button class="btn green" id="readBtn" style="display:none">Check product</button>
+    <div id="result"></div>
+  </section>
 
-  <p id="status"></p>
-  <div id="result"></div>
-
-  <details id="savedBox">
-    <summary id="savedSummary">Saved products (0)</summary>
+  <!-- ===== SAVED TAB ===== -->
+  <section class="tabpanel" id="panel-saved" hidden>
+    <h2 id="savedSummary">Saved products (0)</h2>
     <div id="picTools" style="display:none">
       <button class="btn gray" id="findPicsBtn">Find pictures automatically</button>
       <p class="note" id="picMsg"></p>
     </div>
     <div id="savedList"></div>
-  </details>
+  </section>
   <input id="thumbCam" type="file" accept="image/*" capture="environment" style="display:none">
 
-  <details id="backupBox">
-    <summary id="backupSummary">Backup &amp; restore</summary>
+  <!-- ===== LISTS TAB ===== -->
+  <section class="tabpanel" id="panel-lists" hidden>
+    <h2>Shopping lists</h2>
+    <div class="banner b-warn"><b>Coming soon.</b> This tab will group your products by store (Costco, Sprouts, Aldi...)
+      with tick-off lists for shopping, and show each product's verdict color.
+      <br><br>For now, collect your list in the Excel template. Later it can be imported here.</div>
+  </section>
+
+  <!-- ===== MORE TAB ===== -->
+  <section class="tabpanel" id="panel-more" hidden>
+    <h2>API key</h2>
+    <details id="keybox">
+      <summary>Gemini key for reading label photos</summary>
+      <p style="font-size:14px">Paste your Gemini key once. It is stored only on this phone.</p>
+      <input id="keyInput" type="password" placeholder="Paste API key here">
+      <button class="btn gray" id="saveKey">Save key</button>
+    </details>
+
+    <h2>Your verdict limits</h2>
+    <div id="limits"></div>
+
+    <h2 id="backupSummary">Backup &amp; restore</h2>
     <p class="note" id="backupInfo"></p>
     <p class="note" id="backupMsg" style="font-weight:bold;color:#1a1a1a"></p>
     <label style="display:flex;gap:10px;align-items:flex-start;margin:10px 0;font-size:15px;cursor:pointer">
@@ -145,11 +178,22 @@
       <button class="btn gray" id="pasteBtn">Restore from pasted text</button>
     </details>
     <p class="note">The backup has only your saved products. It does not include your API key. Restoring adds to what is already on this phone and never deletes anything.</p>
-  </details>
+
+    <h2>About</h2>
+    <p class="note">Nutri Label Check - version <span id="ver"></span>. Your saved products and key stay on this phone.</p>
+  </section>
+
+  <nav id="tabbar"><div class="inner">
+    <button class="tab on" data-tab="scan"><span class="ti">&#128247;</span><span class="tl">Scan</span></button>
+    <button class="tab" data-tab="saved"><span class="ti">&#11088;</span><span class="tl" id="tabSavedLbl">Saved</span></button>
+    <button class="tab" data-tab="lists"><span class="ti">&#128722;</span><span class="tl">Lists</span></button>
+    <button class="tab" data-tab="more"><span class="ti">&#9881;&#65039;</span><span class="tl">More<i id="moreDot"></i></span></button>
+  </div></nav>
 
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
+  const APP_VERSION = '2026-10-16 tabs';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -349,9 +393,9 @@
   function parseBackup(text) {
     let d;
     try { d = JSON.parse(String(text).trim()); }
-    catch (e) { return { ok: false, error: 'Could not read that. It does not look like a Label Check backup.' }; }
+    catch (e) { return { ok: false, error: 'Could not read that. It does not look like a Nutri Label Check backup.' }; }
     if (!d || d.app !== BACKUP_APP || !d.products || typeof d.products !== 'object' || Array.isArray(d.products)) {
-      return { ok: false, error: 'That file is not a Label Check backup.' };
+      return { ok: false, error: 'That file is not a Nutri Label Check backup.' };
     }
     const clean = {};
     let skipped = 0;
@@ -432,6 +476,53 @@
   const verifyNote = document.getElementById('verifyNote');
   const savedList = document.getElementById('savedList');
 
+  // ---------- message toast (stays for errors, fades for the rest; tap to close) ----------
+  let toastTimer = null;
+  new MutationObserver(function () {
+    const t = statusEl.textContent.trim();
+    clearTimeout(toastTimer);
+    if (!t) { statusEl.style.display = 'none'; return; }
+    statusEl.style.display = 'block';
+    const sticky = /error|could not|timed out|failed|did not work|denied|not available|blocked|go to the more tab/i.test(t) ||
+                   /^(Checking product|Looking up|Looking for|Opening)/.test(t);
+    if (!sticky) toastTimer = setTimeout(function () { statusEl.style.display = 'none'; }, 10000);
+  }).observe(statusEl, { childList: true, characterData: true, subtree: true });
+  statusEl.addEventListener('click', function () { statusEl.style.display = 'none'; });
+
+  // ---------- tabs ----------
+  function showTab(name) {
+    if (stream) stopCamera();
+    document.querySelectorAll('.tabpanel').forEach(function (p) { p.hidden = (p.id !== 'panel-' + name); });
+    document.querySelectorAll('#tabbar .tab').forEach(function (b) {
+      b.classList.toggle('on', b.getAttribute('data-tab') === name);
+    });
+    window.scrollTo(0, 0);
+  }
+  document.getElementById('tabbar').addEventListener('click', function (ev) {
+    const b = ev.target.closest('.tab');
+    if (b) showTab(b.getAttribute('data-tab'));
+  });
+
+  // ---------- show the current limits on the More tab ----------
+  function renderLimits() {
+    let h = '<table>';
+    RULES.forEach(function (r) {
+      const parts = [];
+      if (r.yellow !== null) parts.push('watch above ' + r.yellow + ' ' + r.unit);
+      if (r.red !== null) parts.push('not good above ' + r.red + ' ' + r.unit);
+      h += '<tr><td>' + esc(r.name) + '</td><td>' + esc(parts.join(' | ')).replace(' | ', '<br>') + '</td></tr>';
+    });
+    h += '</table>';
+    const lv = { red: [], yellow: [] };
+    WATCHLIST.forEach(function (w) { if (lv[w.level].indexOf(w.why) === -1) lv[w.level].push(w.why); });
+    h += '<p class="note"><b>Ingredients that make it NOT GOOD:</b> ' + esc(lv.red.join('; ')) + '.</p>';
+    h += '<p class="note"><b>Ingredients that make it WATCH:</b> ' + esc(lv.yellow.join('; ')) + '.</p>';
+    h += '<p class="note">All amounts are per serving as printed on the label.</p>';
+    document.getElementById('limits').innerHTML = h;
+  }
+  renderLimits();
+  document.getElementById('ver').textContent = APP_VERSION;
+
   let photos = [];
   let verifyCode = null;   // barcode we are checking against a label photo
   let lastDb = {};         // database numbers seen this session, by barcode
@@ -473,6 +564,7 @@
     const all = loadSaved();
     const rows = summarizeSaved(all);
     document.getElementById('savedSummary').textContent = 'Saved products (' + rows.length + ')';
+    document.getElementById('tabSavedLbl').textContent = rows.length ? 'Saved (' + rows.length + ')' : 'Saved';
     renderBackupInfo(all);
     document.getElementById('picTools').style.display =
       rows.some(function (r) { return !safeImage(r.s.image); }) ? 'block' : 'none';
@@ -509,6 +601,7 @@
   function openSaved(key) {
     const s = loadSaved()[key];
     if (!s) return;
+    showTab('scan');
     verifyCode = null;
     verifyNote.textContent = '';
     current = { code: s.code, name: s.name || '', nutrients: s.nutrients, source: 'saved', savedAt: s.savedAt };
@@ -662,6 +755,7 @@
     else info = 'Last backup: ' + new Date(last).toLocaleString() + '. ' +
       (pending ? pending + ' product(s) saved since then are not backed up.' : 'Everything is backed up.');
     document.getElementById('backupInfo').textContent = info;
+    document.getElementById('moreDot').style.display = pending ? 'inline-block' : 'none';
     document.getElementById('backupSummary').textContent =
       'Backup & restore' + (pending ? ' - ' + pending + ' not backed up' : '');
   }
@@ -732,7 +826,7 @@
     let fileError = '';
     try {
       const file = new File([text], backupName(), { type: 'application/json' });
-      await navigator.share({ files: [file], title: 'Label Check backup' });
+      await navigator.share({ files: [file], title: 'Nutri Label Check backup' });
       markBackedUp();
       say('Backup shared.');
       return;
@@ -742,7 +836,7 @@
     }
     // Fallback: share the backup as plain text instead of a file
     try {
-      await navigator.share({ title: 'Label Check backup', text: text });
+      await navigator.share({ title: 'Nutri Label Check backup', text: text });
       markBackedUp();
       say('Backup shared as text. To restore later, use "Or paste backup text".');
     } catch (e2) {
@@ -1014,7 +1108,7 @@
 
   readBtn.addEventListener('click', async function () {
     const key = getKey();
-    if (!key) { statusEl.textContent = 'Open "API key setup" and save your key first.'; document.getElementById('keybox').open = true; return; }
+    if (!key) { statusEl.textContent = 'Go to the More tab and save your API key first.'; document.getElementById('keybox').open = true; showTab('more'); return; }
     if (!photos.length) return;
 
     readBtn.disabled = true;
@@ -1166,6 +1260,7 @@
     resultEl.innerHTML = html;
   }
 
+  if (!getKey()) showTab('more');
   initScanner();
 </script>
 </body>
