@@ -193,7 +193,7 @@
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
-  const APP_VERSION = '2026-10-16 tabs';
+  const APP_VERSION = '2026-10-16 tabs-2';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -500,7 +500,15 @@
   }
   document.getElementById('tabbar').addEventListener('click', function (ev) {
     const b = ev.target.closest('.tab');
-    if (b) showTab(b.getAttribute('data-tab'));
+    if (!b) return;
+    const name = b.getAttribute('data-tab');
+    if (name === 'scan') {
+      if (stream) return;                 // camera is already on
+      showTab('scan');
+      if (detector) scanBtn.click();      // tapping the camera tab opens the scanner
+      return;
+    }
+    showTab(name);
   });
 
   // ---------- show the current limits on the More tab ----------
