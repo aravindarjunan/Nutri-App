@@ -193,7 +193,7 @@
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
-  const APP_VERSION = '2026-10-16 tabs-2';
+  const APP_VERSION = '2026-10-16 memory-1';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -1034,8 +1034,7 @@
 
   function startVerify(code) {
     verifyCode = code;
-    photos = [];
-    renderThumbs();
+    releasePhotos();
     verifyNote.textContent = 'Checking barcode ' + code + ': add a photo of the Nutrition Facts panel, then one of the ingredients.';
     statusEl.textContent = '';
     document.getElementById('photoSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1052,54 +1051,69 @@
   });
 
   // ---------- label photos ----------
+  // Free the photos from memory (camera photos are large)
+  function releasePhotos() {
+    photos = [];
+    renderThumbs();
+  }
+  // Decode a photo once and return a SMALL jpeg data URL (used for preview and for the AI)
+  function shrinkImage(file, max, quality) {
+    return new Promise(function (resolve, reject) {
+      const img = new Image();
+      const u = URL.createObjectURL(file);
+      img.onload = function () {
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.width * scale));
+        c.height = Math.max(1, Math.round(img.height * scale));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const out = c.toDataURL('image/jpeg', quality);
+        c.width = 1; c.height = 1;
+        img.src = '';
+        URL.revokeObjectURL(u);
+        resolve(out);
+      };
+      img.onerror = function () { URL.revokeObjectURL(u); reject(new Error('picture')); };
+      img.src = u;
+    });
+  }
   function renderThumbs() {
     thumbs.innerHTML = '';
     photos.forEach(function (p) {
       const img = document.createElement('img');
-      img.src = p.url;
+      img.src = p.small;
       thumbs.appendChild(img);
     });
     readBtn.style.display = photos.length ? 'block' : 'none';
     clearBtn.style.display = photos.length ? 'block' : 'none';
   }
 
-  cam.addEventListener('change', function () {
+  cam.addEventListener('change', async function () {
     const f = cam.files[0];
+    cam.value = '';
     if (!f) return;
     if (photos.length >= 3) {
       statusEl.textContent = 'Maximum 3 photos. Tap "Clear photos" to start over.';
-    } else {
-      photos.push({ file: f, url: URL.createObjectURL(f) });
+      return;
+    }
+    try {
+      // keep only a reduced copy (about 1600 px) - the big original is dropped right away
+      const big = await shrinkImage(f, 1600, 0.85);
+      const small = await shrinkImage(f, 220, 0.7);
+      photos.push({ b64: big.split(',')[1], small: small });
       resultEl.innerHTML = '';
       statusEl.textContent = photos.length + ' photo(s) added. Add the ingredients photo, or tap "Check product".';
       renderThumbs();
+    } catch (e) {
+      statusEl.textContent = 'Could not read that photo. Please try again.';
     }
-    cam.value = '';
   });
 
   clearBtn.addEventListener('click', function () {
-    photos = [];
-    renderThumbs();
+    releasePhotos();
     resultEl.innerHTML = '';
     statusEl.textContent = '';
   });
-
-  function shrinkToBase64(file) {
-    return new Promise(function (resolve, reject) {
-      const img = new Image();
-      img.onload = function () {
-        const max = 1600;
-        const scale = Math.min(1, max / Math.max(img.width, img.height));
-        const c = document.createElement('canvas');
-        c.width = Math.round(img.width * scale);
-        c.height = Math.round(img.height * scale);
-        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        resolve(c.toDataURL('image/jpeg', 0.85).split(',')[1]);
-      };
-      img.onerror = reject;
-      img.src = URL.createObjectURL(file);
-    });
-  }
 
   const PROMPT =
     'You are reading a food product from one to three photos of the SAME product. ' +
@@ -1128,7 +1142,7 @@
     const killer = setTimeout(function () { controller.abort(); }, 90000);
 
     try {
-      const images = await Promise.all(photos.map(function (p) { return shrinkToBase64(p.file); }));
+      const images = photos.map(function (p) { return p.b64; });
       const parts = [{ text: PROMPT }].concat(images.map(function (b64) {
         return { inline_data: { mime_type: 'image/jpeg', data: b64 } };
       }));
@@ -1154,6 +1168,7 @@
       }
       current = ctx;
       showResult(ctx);
+      releasePhotos();   // free memory: the photos are no longer needed
       statusEl.textContent = 'Done in ' + secs + 's. Compare with the real package if anything looks odd.';
     } catch (err) {
       statusEl.textContent = (err.name === 'AbortError')
