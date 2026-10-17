@@ -193,7 +193,7 @@
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
-  const APP_VERSION = '2026-10-16 memory-1';
+  const APP_VERSION = '2026-10-16 save-1';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -532,6 +532,7 @@
   document.getElementById('ver').textContent = APP_VERSION;
 
   let photos = [];
+  let lastScanCode = null; // most recent barcode scanned/typed (photos link to it automatically)
   let verifyCode = null;   // barcode we are checking against a label photo
   let lastDb = {};         // database numbers seen this session, by barcode
   let current = null;      // what is on screen now
@@ -611,6 +612,7 @@
     if (!s) return;
     showTab('scan');
     verifyCode = null;
+    lastScanCode = null;
     verifyNote.textContent = '';
     current = { code: s.code, name: s.name || '', nutrients: s.nutrients, source: 'saved', savedAt: s.savedAt };
     showResult(current);
@@ -895,6 +897,7 @@
       image: (prev && prev.image) || (db && db.image) || ''
     };
     if (writeSaved(all)) {
+      lastScanCode = null; verifyCode = null; verifyNote.textContent = '';
       statusEl.textContent = 'Saved. Next time you scan this barcode, it will use these numbers.';
       renderSaved();
       if (autoBackupOn()) {
@@ -996,6 +999,7 @@
 
   async function handleBarcode(code) {
     code = String(code).replace(/\D/g, '');
+    lastScanCode = code;
     verifyCode = null;
     verifyNote.textContent = '';
     resultEl.innerHTML = '';
@@ -1095,6 +1099,10 @@
     if (photos.length >= 3) {
       statusEl.textContent = 'Maximum 3 photos. Tap "Clear photos" to start over.';
       return;
+    }
+    if (!verifyCode && lastScanCode) {
+      verifyCode = lastScanCode;
+      verifyNote.textContent = 'Checking barcode ' + verifyCode + ': add the Nutrition Facts photo, then the ingredients photo.';
     }
     try {
       // keep only a reduced copy (about 1600 px) - the big original is dropped right away
@@ -1227,6 +1235,10 @@
       h += '<div class="banner b-warn">Only tap below if the numbers on this screen match the package.' +
         '<button class="btn green" data-act="save">Remember this product</button></div>';
       return h;
+    }
+    if (ctx.source === 'label') {
+      return '<div class="banner b-warn"><b>This product cannot be saved yet</b> because no barcode is linked to these photos. ' +
+        'Scan the barcode first (Scan barcode or type the digits), then add the label photos.</div>';
     }
     return '';
   }
