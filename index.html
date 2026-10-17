@@ -193,7 +193,7 @@
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
-  const APP_VERSION = '2026-10-16 save-1';
+  const APP_VERSION = '2026-10-17 dbsave-1';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -410,6 +410,7 @@
         savedAt: typeof s.savedAt === 'string' ? s.savedAt : '',
         image: safeImage(s.image)
       };
+      if (s.unverified === true) clean[key].unverified = true;
     });
     return { ok: true, products: clean, skipped: skipped };
   }
@@ -601,7 +602,7 @@
       html += '<div class="saveditem lv-' + r.level + '" data-key="' + esc(r.key) + '">' + thumb +
         '<div class="info"><span class="chip ' + r.level + '">' + (r.star ? '&#11088; ' : '') + levelLabel(r.level) + '</span>' +
         '<div class="nm">' + esc(s.name || 'Unnamed product') + '</div>' +
-        '<div class="note">' + (r.reason ? esc(r.reason) + '<br>' : '') + esc(s.code) + ' - ' + esc(d) + '</div></div>' +
+        '<div class="note">' + (r.reason ? esc(r.reason) + '<br>' : '') + esc(s.code) + ' - ' + esc(d) + (s.unverified ? ' - <b>unverified</b>' : '') + '</div></div>' +
         '<button class="btn gray tiny" data-act="removesaved" data-key="' + esc(r.key) + '">Remove</button></div>';
     });
     savedList.innerHTML = html;
@@ -614,7 +615,7 @@
     verifyCode = null;
     lastScanCode = null;
     verifyNote.textContent = '';
-    current = { code: s.code, name: s.name || '', nutrients: s.nutrients, source: 'saved', savedAt: s.savedAt };
+    current = { code: s.code, name: s.name || '', nutrients: s.nutrients, source: 'saved', savedAt: s.savedAt, unverified: s.unverified === true };
     showResult(current);
     statusEl.textContent = 'Showing a saved product.';
     resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -886,19 +887,23 @@
   renderSaved();
 
   function saveCurrent() {
-    if (!current || !current.code || current.source !== 'label') return;
+    if (!current || !current.code || (current.source !== 'label' && current.source !== 'database')) return;
     const name = window.prompt('Name this product (optional):', current.name || '');
     if (name === null) return;
     const all = loadSaved();
     const prev = all[codeKey(current.code)];
     const db = lastDb[codeKey(current.code)];
-    all[codeKey(current.code)] = {
+    const entry = {
       code: current.code, name: name.trim(), nutrients: current.nutrients, savedAt: new Date().toISOString(),
       image: (prev && prev.image) || (db && db.image) || ''
     };
+    if (current.source === 'database') entry.unverified = true;
+    all[codeKey(current.code)] = entry;
     if (writeSaved(all)) {
       lastScanCode = null; verifyCode = null; verifyNote.textContent = '';
-      statusEl.textContent = 'Saved. Next time you scan this barcode, it will use these numbers.';
+      statusEl.textContent = (current.source === 'database')
+        ? 'Saved (unverified). Verify it with a label photo when you can.'
+        : 'Saved. Next time you scan this barcode, it will use these numbers.';
       renderSaved();
       if (autoBackupOn()) {
         try { downloadBackupFile(); statusEl.textContent += ' A backup file was also saved to Downloads.'; }
@@ -1006,7 +1011,7 @@
 
     const saved = loadSaved()[codeKey(code)];
     if (saved) {
-      current = { code: code, name: saved.name || '', nutrients: saved.nutrients, source: 'saved', savedAt: saved.savedAt };
+      current = { code: code, name: saved.name || '', nutrients: saved.nutrients, source: 'saved', savedAt: saved.savedAt, unverified: saved.unverified === true };
       showResult(current);
       statusEl.textContent = 'Found in your saved products.';
       return;
@@ -1210,11 +1215,20 @@
         (ctx.name ? '<br>Product: <b>' + esc(ctx.name) + '</b>' : '') +
         keyNumbersTable(n);
       (ctx.dbNotes || []).forEach(function (x) { h += '<div class="note">' + esc(x) + '</div>'; });
-      h += verifyButton(ctx.code, 'Verify with label photo') + '</div>';
+      h += verifyButton(ctx.code, 'Verify with label photo') +
+        '<button class="btn green" data-act="save">Remember this product (unverified)</button>' +
+        '<div class="note">Saves these database numbers so the verdict shows next time. You can verify with a label photo later.</div></div>';
       return h;
     }
     if (ctx.source === 'saved') {
       const d = ctx.savedAt ? new Date(ctx.savedAt).toLocaleDateString() : '';
+      if (ctx.unverified) {
+        return '<div class="banner b-warn"><b>Saved - NOT verified</b>' + (d ? ' on ' + esc(d) : '') +
+          (ctx.name ? '<br>Product: <b>' + esc(ctx.name) + '</b>' : '') +
+          '<br>These numbers came from the Open Food Facts database and can be wrong. Compare with the package, or verify with a label photo.' +
+          verifyButton(ctx.code, 'Verify with label photo') +
+          '<button class="btn gray" data-act="remove" data-code="' + esc(ctx.code) + '">Remove from saved products</button></div>';
+      }
       return '<div class="banner b-ok"><b>Verified by you</b>' + (d ? ' on ' + esc(d) : '') +
         (ctx.name ? '<br>Product: <b>' + esc(ctx.name) + '</b>' : '') +
         '<br>These numbers were read from the package label and saved on this phone.' +
@@ -1253,7 +1267,7 @@
 
     let small = '';
     if (ctx.source === 'database') small = 'unverified - from database' + (e.incomplete ? ' - incomplete data' : '');
-    else if (ctx.source === 'saved') small = 'verified by you';
+    else if (ctx.source === 'saved') small = ctx.unverified ? 'saved - unverified (database numbers)' : 'verified by you';
     else if (!e.ingredients) small = 'nutrients only - ingredients not checked';
 
     let html = '<div class="verdict v-' + e.level + '">' + (star ? '&#11088; ' : '') + label +
