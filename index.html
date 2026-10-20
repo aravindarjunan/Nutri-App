@@ -112,7 +112,7 @@
   .storepanel { background: #FFF3C4; border-radius: 18px; padding: 12px 10px 10px; margin: 22px -4px 8px; }
   .sphead { display: flex; align-items: center; justify-content: space-between; margin: 0 6px 12px; }
   .sphead h2 { margin: 0; font-size: 21px; }
-  #seeAllStores { background: none; border: none; color: #1a73e8; font-size: 15px; font-weight: bold; cursor: pointer; padding: 4px; }
+  #seeAllStores, #seeAllRecipes { background: none; border: none; color: #1a73e8; font-size: 15px; font-weight: bold; cursor: pointer; padding: 4px; }
   .stores { display: flex; align-items: flex-start; gap: 14px; margin: 0 -10px; padding: 10px 22px 6px; scroll-padding-left: 22px; overflow-x: auto;
             scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
   .stores::-webkit-scrollbar { display: none; }
@@ -174,6 +174,11 @@
     <div class="storepanel">
       <div class="sphead"><h2>Shopping stores</h2><button id="seeAllStores">See all</button></div>
       <div class="stores" id="storeRow"></div>
+    </div>
+
+    <div class="storepanel">
+      <div class="sphead"><h2>Recipes</h2><button id="seeAllRecipes" class="seeall">See all</button></div>
+      <div class="stores" id="frontRecipeRow"></div>
     </div>
   </section>
 
@@ -291,7 +296,7 @@
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
-  const APP_VERSION = '2026-10-20 recipes-1';
+  const APP_VERSION = '2026-10-20 recipes-2';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -1485,6 +1490,14 @@
   function renderRecipes() {
     const all = loadRecipes();
     const cats = ['All'].concat(RECIPE_CATS);
+    const chipHtml = function (c, mark) {
+      const n = c === 'All' ? all.length : all.filter(function (r) { return r.category === c; }).length;
+      const lk = RECIPE_LOOK[c];
+      return '<button class="st" data-cat="' + esc(c) + '"><div class="circ" style="background:' + lk.c + ';' +
+        (mark && c === recipeView ? 'outline:4px solid #1a73e8;outline-offset:2px;' : '') + '">' + lk.e + '</div>' +
+        (n ? '<span class="cnt">' + n + '</span>' : '') + '<div class="lbl">' + esc(c) + '</div></button>';
+    };
+    document.getElementById('frontRecipeRow').innerHTML = cats.slice(1).map(function (c) { return chipHtml(c, false); }).join('');
     document.getElementById('recipeRow').innerHTML = cats.map(function (c) {
       const n = c === 'All' ? all.length : all.filter(function (r) { return r.category === c; }).length;
       const lk = RECIPE_LOOK[c];
@@ -1526,6 +1539,11 @@
     const b = ev.target.closest('.st'); if (!b) return;
     recipeView = b.getAttribute('data-cat'); renderRecipes();
   });
+  document.getElementById('frontRecipeRow').addEventListener('click', function (ev) {
+    const b = ev.target.closest('.st'); if (!b) return;
+    recipeView = b.getAttribute('data-cat'); showTab('recipes');
+  });
+  document.getElementById('seeAllRecipes').addEventListener('click', function () { recipeView = 'All'; showTab('recipes'); });
   document.getElementById('rPaste').addEventListener('click', async function () {
     try {
       const t = await navigator.clipboard.readText();
