@@ -7,24 +7,25 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
-<meta name="theme-color" content="#FFF1B8">
+<meta name="theme-color" content="#F5B800">
 <style>
+  html { background: #fff linear-gradient(180deg, #f5b800 0, #fff0b3 170px, #fff 340px) no-repeat; min-height: 100%; }
   body { font-family: sans-serif; padding: 16px 16px 100px; margin: 0 auto; max-width: 480px; }
-  h1 { text-align: center; margin: 0 0 12px; }
+  h1 { text-align: center; margin: 0 0 12px; color: #2b1d00; }
   h2 { margin: 14px 0 6px; font-size: 20px; }
   .tabpanel[hidden] { display: none; }
-  #tabbar { position: fixed; left: 0; right: 0; bottom: 0; background: #FFF1B8; border-top: 1px solid #e0cf8a;
+  #tabbar { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid #ecd27a; box-shadow: 0 -2px 8px rgba(168,111,0,.12);
             padding-bottom: env(safe-area-inset-bottom); z-index: 30; }
   #tabbar .inner { display: flex; max-width: 480px; margin: 0 auto; }
   #tabbar .tab { flex: 1; background: none; border: none; padding: 8px 0 7px; font-size: 12px; color: #555;
                  cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; }
   #tabbar .tab .ti { font-size: 22px; line-height: 1; opacity: .65; }
-  #tabbar .tab.on { color: #1a73e8; font-weight: bold; }
+  #tabbar .tab.on { color: #a86f00; font-weight: bold; }
   #tabbar .tab.on .ti { opacity: 1; }
   #moreDot { display: none; width: 8px; height: 8px; background: #c5221f; border-radius: 50%;
              margin-left: 4px; vertical-align: middle; }
   .btn { display: block; text-align: center; font-size: 18px; padding: 14px; margin: 10px 0;
-         border-radius: 12px; background: #1a73e8; color: #fff; border: none; width: 100%;
+         border-radius: 12px; background: #a86f00; color: #fff; border: none; width: 100%;
          cursor: pointer; box-sizing: border-box; }
   .btn.green { background: #188038; }
   .btn.gray { background: #666; font-size: 14px; padding: 10px; }
@@ -96,7 +97,7 @@
   .chip.red { background: #c5221f; }
   .filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
   .fbtn { border: 1px solid #bbb; background: #fff; border-radius: 16px; padding: 6px 12px; font-size: 14px; cursor: pointer; }
-  .fbtn.on { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  .fbtn.on { background: #a86f00; color: #fff; border-color: #a86f00; }
   .chip.gray { background: #888; }
   .gcat { margin: 16px 0 2px; font-size: 12px; font-weight: bold; color: #8a5a00; text-transform: uppercase; letter-spacing: .5px; }
   .gstore { margin: 18px 0 2px; font-size: 17px; font-weight: bold; border-bottom: 2px solid #f2b600; padding-bottom: 2px; }
@@ -109,10 +110,10 @@
   .gitem .note { margin: 2px 0 0; }
   .gbtn { border: 1px solid #bbb; background: #fff; border-radius: 8px; padding: 6px 9px; font-size: 13px; cursor: pointer; flex: none; }
   select, #gName, #gBrand { width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; margin: 6px 0; }
-  .storepanel { background: #FFF3C4; border-radius: 18px; padding: 12px 10px 10px; margin: 22px -4px 8px; }
+  .storepanel { background: linear-gradient(180deg, rgba(245,184,0,.62) 0, rgba(255,240,179,.5) 45%, #fff 100%); box-shadow: 0 1px 6px rgba(168,111,0,.15); border-radius: 18px; padding: 12px 10px 10px; margin: 22px -4px 8px; }
   .sphead { display: flex; align-items: center; justify-content: space-between; margin: 0 6px 12px; }
   .sphead h2 { margin: 0; font-size: 21px; }
-  #seeAllStores, #seeAllRecipes { background: none; border: none; color: #1a73e8; font-size: 15px; font-weight: bold; cursor: pointer; padding: 4px; }
+  #seeAllStores, #seeAllRecipes { background: none; border: none; color: #a86f00; font-size: 15px; font-weight: bold; cursor: pointer; padding: 4px; }
   .stores { display: flex; align-items: flex-start; gap: 14px; margin: 0 -10px; padding: 10px 22px 6px; scroll-padding-left: 22px; overflow-x: auto;
             scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
   .stores::-webkit-scrollbar { display: none; }
@@ -296,7 +297,7 @@
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
-  const APP_VERSION = '2026-10-20 recipes-2';
+  const APP_VERSION = '2026-10-20 theme-1';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -1494,7 +1495,7 @@
       const n = c === 'All' ? all.length : all.filter(function (r) { return r.category === c; }).length;
       const lk = RECIPE_LOOK[c];
       return '<button class="st" data-cat="' + esc(c) + '"><div class="circ" style="background:' + lk.c + ';' +
-        (mark && c === recipeView ? 'outline:4px solid #1a73e8;outline-offset:2px;' : '') + '">' + lk.e + '</div>' +
+        (mark && c === recipeView ? 'outline:4px solid #a86f00;outline-offset:2px;' : '') + '">' + lk.e + '</div>' +
         (n ? '<span class="cnt">' + n + '</span>' : '') + '<div class="lbl">' + esc(c) + '</div></button>';
     };
     document.getElementById('frontRecipeRow').innerHTML = cats.slice(1).map(function (c) { return chipHtml(c, false); }).join('');
@@ -1502,7 +1503,7 @@
       const n = c === 'All' ? all.length : all.filter(function (r) { return r.category === c; }).length;
       const lk = RECIPE_LOOK[c];
       return '<button class="st" data-cat="' + esc(c) + '"><div class="circ" style="background:' + lk.c + ';' +
-        (c === recipeView ? 'outline:4px solid #1a73e8;outline-offset:2px;' : '') + '">' + lk.e + '</div>' +
+        (c === recipeView ? 'outline:4px solid #a86f00;outline-offset:2px;' : '') + '">' + lk.e + '</div>' +
         (n ? '<span class="cnt">' + n + '</span>' : '') + '<div class="lbl">' + esc(c) + '</div></button>';
     }).join('');
     const shown = all.filter(function (r) { return recipeView === 'All' || r.category === recipeView; })
