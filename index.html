@@ -130,6 +130,16 @@
   .sprow .circ img { width: 100%; height: 100%; object-fit: cover; }
   .sprow .nm { flex: 1; font-size: 15px; font-weight: bold; }
   .grow { display: flex; gap: 8px; margin: 10px 0; }
+  .rcard { border: 1px solid #ddd; border-radius: 14px; padding: 12px; margin: 12px 0; background: #fff; }
+  .rcard .rtop { display: flex; align-items: flex-start; gap: 8px; justify-content: space-between; }
+  .rcard .rt { font-size: 17px; word-break: break-word; }
+  .rcard ul { margin: 8px 0 8px 18px; padding: 0; font-size: 15px; }
+  .rcard .rrow { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .rcard .rrow select { width: auto; flex: 1; margin: 0; min-width: 120px; }
+  .rcard .rrow .btn { margin: 0; }
+  .rcard a.btn { display: block; text-align: center; text-decoration: none; margin: 10px 0 4px; box-sizing: border-box; }
+  #panel-recipes textarea, #panel-recipes input[type=text], #panel-recipes input[type=url] { width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; margin: 6px 0; }
+  #panel-recipes .stores { margin-bottom: 4px; }
   .grow .btn { margin: 0; }
 </style>
 </head>
@@ -206,6 +216,28 @@
     <p class="note">Tap a product name to see its verdict. Tap "Link" and scan its barcode so its verdict color shows here.</p>
   </section>
 
+  <!-- ===== RECIPES TAB ===== -->
+  <section class="tabpanel" id="panel-recipes" hidden>
+    <h2>Recipes</h2>
+    <div class="stores" id="recipeRow"></div>
+    <p class="note" id="recipeSummary"></p>
+    <div id="recipeList"></div>
+    <details id="rForm">
+      <summary id="rFormTitle">+ Add a recipe</summary>
+      <input type="text" id="rTitle" placeholder="Recipe name, for example Greek chickpea salad">
+      <select id="rCat"></select>
+      <input type="url" id="rLink" placeholder="Instagram link (paste here)">
+      <button class="btn gray" id="rPaste">Paste link from clipboard</button>
+      <textarea id="rIng" rows="6" placeholder="Ingredients, one per line"></textarea>
+      <label class="btn gray" for="rPhoto">Read ingredients from a photo or screenshot</label>
+      <input id="rPhoto" type="file" accept="image/*" style="display:none">
+      <textarea id="rNotes" rows="3" placeholder="Notes (optional)"></textarea>
+      <button class="btn green" id="rSave">Save recipe</button>
+      <button class="btn gray" id="rCancel" style="display:none">Cancel editing</button>
+    </details>
+    <p class="note">Tip: in Instagram open the reel, tap Share, then Copy link. Come back here and tap "Paste link from clipboard".</p>
+  </section>
+
   <!-- ===== MORE TAB ===== -->
   <section class="tabpanel" id="panel-more" hidden>
     <h2>API key</h2>
@@ -242,7 +274,7 @@
       <textarea id="pasteBox" rows="5" placeholder="Paste backup text here"></textarea>
       <button class="btn gray" id="pasteBtn">Restore from pasted text</button>
     </details>
-    <p class="note">The backup has your saved products and your shopping list. It does not include your API key. Restoring adds to what is already on this phone and never deletes anything.</p>
+    <p class="note">The backup has your saved products, your shopping list and your recipes. It does not include your API key. Restoring adds to what is already on this phone and never deletes anything.</p>
 
     <h2>About</h2>
     <p class="note">Nutri Label Check - version <span id="ver"></span>. Your saved products and key stay on this phone.</p>
@@ -252,13 +284,14 @@
     <button class="tab on" data-tab="scan"><span class="ti">&#128247;</span><span class="tl">Scan</span></button>
     <button class="tab" data-tab="saved"><span class="ti">&#11088;</span><span class="tl" id="tabSavedLbl">Saved</span></button>
     <button class="tab" data-tab="lists"><span class="ti">&#128722;</span><span class="tl">Lists</span></button>
+    <button class="tab" data-tab="recipes"><span class="ti">&#127869;&#65039;</span><span class="tl">Recipes</span></button>
     <button class="tab" data-tab="more"><span class="ti">&#9881;&#65039;</span><span class="tl">More<i id="moreDot"></i></span></button>
   </div></nav>
 
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
-  const APP_VERSION = '2026-10-20 stores-3';
+  const APP_VERSION = '2026-10-20 recipes-1';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -449,10 +482,11 @@
   // ----- backup / restore (pure helpers) -----
   const BACKUP_APP = 'label-check-backup';
 
-  function buildBackup(all, when, groceries) {
+  function buildBackup(all, when, groceries, recipes) {
     const b = { app: BACKUP_APP, version: 1, exportedAt: when || new Date().toISOString(),
                 count: Object.keys(all).length, products: all };
     if (Array.isArray(groceries)) b.groceries = groceries;
+    if (Array.isArray(recipes)) b.recipes = recipes;
     return b;
   }
 
@@ -480,7 +514,8 @@
       if (s.unverified === true) clean[key].unverified = true;
     });
     const gl = Array.isArray(d.groceries) ? d.groceries.map(cleanGrocery).filter(function (g) { return g; }) : [];
-    return { ok: true, products: clean, skipped: skipped, groceries: gl };
+    const rl = Array.isArray(d.recipes) ? d.recipes.map(cleanRecipe).filter(function (x) { return x; }) : [];
+    return { ok: true, products: clean, skipped: skipped, groceries: gl, recipes: rl };
   }
 
   // Adds backup products to what is on the phone. Never deletes. If both have the
@@ -640,6 +675,46 @@
     const showBrand = g.brand && gName(g.name).indexOf(gName(g.brand)) === -1;
     return '- ' + g.name + (showBrand ? ' (' + g.brand + ')' : '');
   }
+  const RECIPE_CATS = ['Salads', 'Chicken', 'Seafoods', 'Paneer', 'High Protein', 'Chutneys', 'Quick Recipes'];
+  function newRid() { return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function extractUrl(text) {
+    const m = String(text == null ? '' : text).match(/https?:\/\/[^\s<>"']+/i);
+    return m ? m[0].replace(/[.,;)]+$/, '') : '';
+  }
+  function ingredientLines(text) {
+    return String(text == null ? '' : text).split(/\r?\n/).map(function (l) {
+      return l.replace(/^\s*(?:[-*•●]|\d+[.)])\s*/, '').replace(/\s+/g, ' ').trim();
+    }).filter(function (l) { return l; });
+  }
+  function cleanRecipe(r) {
+    if (!r || typeof r !== 'object') return null;
+    const t = function (v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); };
+    let title = t(r.title);
+    const link = extractUrl(r.link);
+    if (!title && !link) return null;
+    if (!title) title = 'Recipe';
+    return { id: (typeof r.id === 'string' && r.id) ? r.id : newRid(), title: title,
+             category: RECIPE_CATS.indexOf(r.category) !== -1 ? r.category : '', link: link,
+             ingredients: ingredientLines(r.ingredients).join('\n'),
+             notes: String(r.notes == null ? '' : r.notes).trim().slice(0, 2000),
+             savedAt: typeof r.savedAt === 'string' ? r.savedAt : '' };
+  }
+  // Adds new recipes. A recipe counts as the same one if it has the same link, or the same title when it has no link.
+  function mergeRecipes(mine, incoming) {
+    const out = mine.slice();
+    const key = function (r) { return r.link ? 'L' + r.link.toLowerCase().replace(/[?#].*$/, '').replace(/\/+$/, '') : 'T' + gName(r.title); };
+    const seen = {};
+    out.forEach(function (r) { seen[key(r)] = true; });
+    let added = 0, kept = 0;
+    incoming.forEach(function (raw) {
+      const r = cleanRecipe(raw);
+      if (!r) return;
+      if (seen[key(r)]) { kept++; return; }
+      if (out.some(function (x) { return x.id === r.id; })) r.id = newRid();
+      out.push(r); seen[key(r)] = true; added++;
+    });
+    return { merged: out, added: added, kept: kept };
+  }
   // ==== PURE END ====
 
   // ---------- screen elements ----------
@@ -680,6 +755,7 @@
       b.classList.toggle('on', b.getAttribute('data-tab') === name);
     });
     if (name === 'lists' && typeof renderLists === 'function') renderLists();
+    if (name === 'recipes' && typeof renderRecipes === 'function') renderRecipes();
     window.scrollTo(0, 0);
   }
   document.getElementById('tabbar').addEventListener('click', function (ev) {
@@ -955,7 +1031,7 @@
       'Backup & restore' + (pending ? ' - ' + pending + ' not backed up' : '');
   }
 
-  function backupText() { return JSON.stringify(buildBackup(loadSaved(), undefined, loadGroceries()), null, 1); }
+  function backupText() { return JSON.stringify(buildBackup(loadSaved(), undefined, loadGroceries(), loadRecipes()), null, 1); }
   function backupName() { return 'label-check-backup-' + new Date().toISOString().slice(0, 10) + '.json'; }
   function hasProducts() {
     if (Object.keys(loadSaved()).length || loadGroceries().length) return true;
@@ -1052,6 +1128,11 @@
       writeGroceries(gm.merged); renderLists();
       msg += ' Shopping list: added ' + gm.added + ' item(s).';
     }
+    if (r.recipes && r.recipes.length) {
+      const rm = mergeRecipes(loadRecipes(), r.recipes);
+      writeRecipes(rm.merged); renderRecipes();
+      msg += ' Recipes: added ' + rm.added + '.';
+    }
     if (r.skipped) msg += ' Skipped ' + r.skipped + ' damaged entr' + (r.skipped === 1 ? 'y' : 'ies') + '.';
     say(msg);
   }
@@ -1122,7 +1203,15 @@
     return String(g.also || '').split(/[,;\/]/).some(function (x) { return x.trim().toLowerCase() === view.toLowerCase(); });
   }
 
+  function syncAddStore() {
+    const sel = document.getElementById('gStore');
+    if (!sel) return;
+    if (MAIN_STORES.indexOf(storeView) !== -1) sel.value = storeView;
+    else if (storeView === 'Other stores' && MAIN_STORES.indexOf(sel.value) !== -1) sel.value = 'Other';
+    document.getElementById('gAddBtn').textContent = 'Add to ' + sel.value + ' list';
+  }
   function renderLists() {
+    syncAddStore();
     const list = loadGroceries();
     const saved = loadSaved();
     const views = ['all'].concat(MAIN_STORES, ['Other stores']);
@@ -1239,6 +1328,9 @@
     }
   });
 
+  document.getElementById('gStore').addEventListener('change', function () {
+    document.getElementById('gAddBtn').textContent = 'Add to ' + this.value + ' list';
+  });
   document.getElementById('gAddBtn').addEventListener('click', function () {
     const name = document.getElementById('gName').value;
     const g = cleanGrocery({ name: name, brand: document.getElementById('gBrand').value,
@@ -1370,9 +1462,160 @@
     pendingStorePic = null;
   });
 
+  // ---------- recipes (screen) ----------
+  const RECIPE_KEY = 'recipes_v1';
+  const RECIPE_LOOK = {
+    'All':          { c: '#7a7a7a', e: '\u{1F37D}️' },
+    'Salads':       { c: '#2f8f4e', e: '\u{1F957}' },
+    'Chicken':      { c: '#c76a1a', e: '\u{1F357}' },
+    'Seafoods':     { c: '#2358a8', e: '\u{1F41F}' },
+    'Paneer':       { c: '#d9a400', e: '\u{1F9C0}' },
+    'High Protein': { c: '#c5221f', e: '\u{1F4AA}' },
+    'Chutneys':     { c: '#0b5d3b', e: '\u{1F33F}' },
+    'Quick Recipes':{ c: '#7a3fb5', e: '⚡' }
+  };
+  let recipeView = 'All';
+  let editingRecipe = null;
+  function loadRecipes() {
+    try { const a = JSON.parse(localStorage.getItem(RECIPE_KEY) || '[]'); return Array.isArray(a) ? a.map(cleanRecipe).filter(function (x) { return x; }) : []; } catch (e) { return []; }
+  }
+  function writeRecipes(list) {
+    try { localStorage.setItem(RECIPE_KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
+  }
+  function renderRecipes() {
+    const all = loadRecipes();
+    const cats = ['All'].concat(RECIPE_CATS);
+    document.getElementById('recipeRow').innerHTML = cats.map(function (c) {
+      const n = c === 'All' ? all.length : all.filter(function (r) { return r.category === c; }).length;
+      const lk = RECIPE_LOOK[c];
+      return '<button class="st" data-cat="' + esc(c) + '"><div class="circ" style="background:' + lk.c + ';' +
+        (c === recipeView ? 'outline:4px solid #1a73e8;outline-offset:2px;' : '') + '">' + lk.e + '</div>' +
+        (n ? '<span class="cnt">' + n + '</span>' : '') + '<div class="lbl">' + esc(c) + '</div></button>';
+    }).join('');
+    const shown = all.filter(function (r) { return recipeView === 'All' || r.category === recipeView; })
+      .sort(function (a, b) { return a.title.localeCompare(b.title); });
+    document.getElementById('recipeSummary').textContent = all.length
+      ? (recipeView === 'All' ? 'All recipes' : recipeView) + ': ' + shown.length
+      : 'No recipes yet. Tap "+ Add a recipe" below and paste an Instagram reel link.';
+    const storeOpts = Array.prototype.map.call(document.getElementById('gStore').options, function (o) {
+      return '<option>' + esc(o.value) + '</option>'; }).join('');
+    document.getElementById('recipeList').innerHTML = shown.map(function (r) {
+      const lines = ingredientLines(r.ingredients);
+      const lk = RECIPE_LOOK[r.category];
+      return '<div class="rcard" data-id="' + esc(r.id) + '"><div class="rtop"><b class="rt">' + esc(r.title) + '</b>' +
+        (r.category ? '<span class="chip" style="background:' + lk.c + '">' + esc(r.category) + '</span>' : '') + '</div>' +
+        (r.link ? '<a class="btn" href="' + esc(r.link) + '" target="_blank" rel="noopener">▶ Open reel</a>' : '') +
+        ((lines.length || r.notes) ? '<details><summary>Ingredients' + (lines.length ? ' (' + lines.length + ')' : '') + ' and notes</summary>' +
+          (lines.length ? '<ul>' + lines.map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('') + '</ul>' : '') +
+          (r.notes ? '<p class="note" style="white-space:pre-wrap">' + esc(r.notes) + '</p>' : '') + '</details>' : '') +
+        (lines.length ? '<div class="rrow"><select data-role="store">' + storeOpts + '</select><button class="btn gray" data-act="tolist">Add ingredients to this store\'s list</button></div>' : '') +
+        '<div class="rrow"><button class="gbtn" data-act="edit">Edit</button><button class="gbtn" data-act="del">Delete</button></div></div>';
+    }).join('');
+  }
+  function resetRecipeForm() {
+    editingRecipe = null;
+    ['rTitle', 'rLink', 'rIng', 'rNotes'].forEach(function (id) { document.getElementById(id).value = ''; });
+    document.getElementById('rCat').value = recipeView !== 'All' ? recipeView : '';
+    document.getElementById('rFormTitle').textContent = '+ Add a recipe';
+    document.getElementById('rSave').textContent = 'Save recipe';
+    document.getElementById('rCancel').style.display = 'none';
+  }
+  document.getElementById('rCat').innerHTML = '<option value="">Category (pick one)</option>' +
+    RECIPE_CATS.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join('');
+  document.getElementById('recipeRow').addEventListener('click', function (ev) {
+    const b = ev.target.closest('.st'); if (!b) return;
+    recipeView = b.getAttribute('data-cat'); renderRecipes();
+  });
+  document.getElementById('rPaste').addEventListener('click', async function () {
+    try {
+      const t = await navigator.clipboard.readText();
+      const u = extractUrl(t);
+      if (u) { document.getElementById('rLink').value = u; statusEl.textContent = 'Link pasted.'; }
+      else statusEl.textContent = 'No link found on the clipboard. In Instagram tap Share, then Copy link.';
+    } catch (e) { statusEl.textContent = 'Could not read the clipboard. Press and hold in the link box, then tap Paste.'; }
+  });
+  document.getElementById('rSave').addEventListener('click', function () {
+    const rec = cleanRecipe({
+      id: editingRecipe, title: document.getElementById('rTitle').value, category: document.getElementById('rCat').value,
+      link: document.getElementById('rLink').value, ingredients: document.getElementById('rIng').value,
+      notes: document.getElementById('rNotes').value, savedAt: new Date().toISOString() });
+    if (!rec) { statusEl.textContent = 'Type a recipe name or paste a link first.'; return; }
+    let list = loadRecipes();
+    if (editingRecipe) list = list.map(function (x) { return x.id === editingRecipe ? rec : x; });
+    else list.push(rec);
+    if (!writeRecipes(list)) { statusEl.textContent = 'Could not save on this phone (browser storage is blocked).'; return; }
+    statusEl.textContent = 'Recipe saved.';
+    recipeView = rec.category || 'All';
+    resetRecipeForm(); document.getElementById('rForm').open = false; renderRecipes();
+  });
+  document.getElementById('rCancel').addEventListener('click', function () { resetRecipeForm(); document.getElementById('rForm').open = false; });
+  document.getElementById('recipeList').addEventListener('click', function (ev) {
+    const btn = ev.target.closest('[data-act]'); if (!btn) return;
+    const card = btn.closest('.rcard'); const id = card.getAttribute('data-id');
+    const list = loadRecipes(); const r = list.filter(function (x) { return x.id === id; })[0]; if (!r) return;
+    const act = btn.getAttribute('data-act');
+    if (act === 'del') {
+      if (!window.confirm('Delete "' + r.title + '"?')) return;
+      writeRecipes(list.filter(function (x) { return x.id !== id; })); renderRecipes();
+    } else if (act === 'edit') {
+      editingRecipe = id;
+      document.getElementById('rTitle').value = r.title; document.getElementById('rCat').value = r.category;
+      document.getElementById('rLink').value = r.link; document.getElementById('rIng').value = r.ingredients;
+      document.getElementById('rNotes').value = r.notes;
+      document.getElementById('rFormTitle').textContent = 'Editing: ' + r.title;
+      document.getElementById('rSave').textContent = 'Save changes';
+      document.getElementById('rCancel').style.display = 'block';
+      const f = document.getElementById('rForm'); f.open = true; f.scrollIntoView();
+    } else if (act === 'tolist') {
+      const store = card.querySelector('[data-role=store]').value;
+      const items = ingredientLines(r.ingredients).map(function (l) { return { name: l, store: store }; });
+      const m = mergeGroceries(loadGroceries(), items);
+      writeGroceries(m.merged); renderLists();
+      statusEl.textContent = 'Added ' + m.added + ' item(s) to ' + store + (m.kept ? ' (' + m.kept + ' already on your list).' : '.');
+    }
+  });
+  document.getElementById('rPhoto').addEventListener('change', async function (ev) {
+    const f = ev.target.files[0]; ev.target.value = ''; if (!f) return;
+    const key = getKey();
+    if (!key) { statusEl.textContent = 'Add your Gemini key on the More tab first.'; return; }
+    statusEl.textContent = 'Reading the picture...';
+    try {
+      const data64 = (await shrinkImage(f, 1600, 0.85)).split(',')[1];
+      const resp = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + MODEL + ':generateContent', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({ contents: [{ parts: [
+          { text: 'This is a screenshot or photo of a recipe. Return JSON {"title": string, "ingredients": [strings]}. Copy only what is written, with quantities. Do not invent anything. Use an empty list if there are no ingredients.' },
+          { inline_data: { mime_type: 'image/jpeg', data: data64 } }] }],
+          generationConfig: { responseMimeType: 'application/json', temperature: 0 } })
+      });
+      const d = await resp.json();
+      if (!resp.ok) throw new Error((d.error && d.error.message) || ('HTTP ' + resp.status));
+      const j = JSON.parse(d.candidates[0].content.parts.map(function (p) { return p.text || ''; }).join(''));
+      const ing = Array.isArray(j.ingredients) ? j.ingredients.join('\n') : '';
+      const box = document.getElementById('rIng');
+      box.value = (box.value.trim() ? box.value.trim() + '\n' : '') + ing;
+      const ti = document.getElementById('rTitle');
+      if (!ti.value.trim() && typeof j.title === 'string') ti.value = j.title;
+      statusEl.textContent = ing ? 'Ingredients added. Check them against the recipe.' : 'No ingredients found in that picture.';
+    } catch (e) { statusEl.textContent = 'Error: ' + e.message; }
+  });
+  // Instagram "Share to Nutri Label Check" arrives as ?url= / ?text= on the address
+  (function () {
+    let p; try { p = new URLSearchParams(location.search); } catch (e) { return; }
+    const u = extractUrl(p.get('url') || '') || extractUrl(p.get('text') || '');
+    if (!u && !p.get('title')) return;
+    showTab('recipes'); resetRecipeForm();
+    document.getElementById('rLink').value = u;
+    const t = (p.get('title') || '').trim(); if (t && !extractUrl(t)) document.getElementById('rTitle').value = t;
+    document.getElementById('rForm').open = true;
+    statusEl.textContent = 'Link received. Add a name and category, then tap Save recipe.';
+    try { history.replaceState(null, '', location.pathname); } catch (e) {}
+  })();
+
   renderSaved();
   renderLists();
   renderStorePics();
+  renderRecipes();
 
   function saveCurrent() {
     if (!current || !current.code || (current.source !== 'label' && current.source !== 'database')) return;
