@@ -109,6 +109,19 @@
   .gitem .note { margin: 2px 0 0; }
   .gbtn { border: 1px solid #bbb; background: #fff; border-radius: 8px; padding: 6px 9px; font-size: 13px; cursor: pointer; flex: none; }
   select, #gName, #gBrand { width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; margin: 6px 0; }
+  .stores { display: flex; justify-content: space-between; gap: 4px; margin: 2px 0 12px; }
+  .st { flex: 1; min-width: 0; background: none; border: none; padding: 0; text-align: center; cursor: pointer; position: relative; }
+  .st .circ { width: 54px; height: 54px; border-radius: 50%; margin: 0 auto; display: flex; align-items: center; justify-content: center;
+              color: #fff; font-weight: bold; font-size: 20px; overflow: hidden; border: 2px solid #fff; box-shadow: 0 1px 5px rgba(0,0,0,.35); }
+  .st .circ img { width: 100%; height: 100%; object-fit: cover; }
+  .st .lbl { font-size: 11px; margin-top: 5px; color: #333; line-height: 1.15; word-break: break-word; }
+  .st .cnt { position: absolute; top: -5px; left: calc(50% + 12px); background: #c5221f; color: #fff; font-size: 11px; font-weight: bold;
+             border-radius: 10px; min-width: 18px; padding: 1px 5px; box-sizing: border-box; border: 2px solid #fff; line-height: 1.2; }
+  .sprow { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #ddd; }
+  .sprow .circ { width: 44px; height: 44px; border-radius: 50%; color: #fff; font-weight: bold; font-size: 17px; display: flex;
+                 align-items: center; justify-content: center; overflow: hidden; flex: none; }
+  .sprow .circ img { width: 100%; height: 100%; object-fit: cover; }
+  .sprow .nm { flex: 1; font-size: 15px; font-weight: bold; }
   .grow { display: flex; gap: 8px; margin: 10px 0; }
   .grow .btn { margin: 0; }
 </style>
@@ -120,6 +133,8 @@
   <!-- ===== SCAN TAB ===== -->
   <section class="tabpanel" id="panel-scan">
     <div class="banner b-warn" id="linkNote" style="display:none"></div>
+    <div class="note" style="text-align:center;margin:0 0 6px">Your stores - tap one to open its shopping list</div>
+    <div class="stores" id="storeRow"></div>
     <button class="btn" id="scanBtn">Scan barcode</button>
     <div id="wrap"><video id="video" playsinline muted></video><div id="box"></div></div>
     <button class="btn gray" id="stopBtn" style="display:none">Stop camera</button>
@@ -191,6 +206,11 @@
       <button class="btn gray" id="saveKey">Save key</button>
     </details>
 
+    <h2>Store pictures</h2>
+    <p class="note">The round store buttons on the front page show a letter and a color. You can put your own picture on any of them, such as a photo or a logo you saved yourself.</p>
+    <div id="storePics"></div>
+    <input id="storePicFile" type="file" accept="image/*" style="display:none">
+
     <h2>Your verdict limits</h2>
     <div id="limits"></div>
 
@@ -228,7 +248,7 @@
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
-  const APP_VERSION = '2026-10-19 lists-1';
+  const APP_VERSION = '2026-10-20 stores-1';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -1130,6 +1150,7 @@
       }
     }
     document.getElementById('groceryList').innerHTML = html;
+    if (typeof renderStoreRow === 'function' && document.getElementById('storeRow')) { try { renderStoreRow(); } catch (e) {} }
   }
 
   // add-item form choices
@@ -1267,8 +1288,80 @@
     reader.readAsText(f);
   });
 
+
+  // ---------- store buttons on the front page ----------
+  const STORE_ICON_KEY = 'store_icons_v1';
+  const STORE_LOOK = {
+    'Costco':       { c: '#d6283c', t: 'C' },
+    'Sprouts':      { c: '#6aa231', t: 'S' },
+    'Whole Foods':  { c: '#0b5d3b', t: 'WF' },
+    'Publix':       { c: '#2f8f4e', t: 'P' },
+    'Kroger':       { c: '#2358a8', t: 'K' },
+    'Other stores': { c: '#7a7a7a', t: '...' }
+  };
+  const STORE_VIEWS = MAIN_STORES.concat(['Other stores']);
+  function loadStoreIcons() {
+    try { return JSON.parse(localStorage.getItem(STORE_ICON_KEY) || '{}') || {}; } catch (e) { return {}; }
+  }
+  function writeStoreIcons(o) { try { localStorage.setItem(STORE_ICON_KEY, JSON.stringify(o)); return true; } catch (e) { return false; } }
+  function circleHtml(st, icons) {
+    const look = STORE_LOOK[st];
+    const img = safeImage(icons[st]);
+    return img
+      ? '<div class="circ" style="background:' + look.c + '"><img src="' + esc(img) + '" alt=""></div>'
+      : '<div class="circ" style="background:' + look.c + '">' + esc(look.t) + '</div>';
+  }
+  function renderStoreRow() {
+    const list = loadGroceries();
+    const icons = loadStoreIcons();
+    document.getElementById('storeRow').innerHTML = STORE_VIEWS.map(function (st) {
+      const n = list.filter(function (g) { return storeGroup(g.store) === st && !g.done; }).length;
+      return '<button class="st" data-store="' + esc(st) + '" aria-label="' + esc(st) + ' list">' + circleHtml(st, icons) +
+        (n ? '<span class="cnt">' + n + '</span>' : '') + '<div class="lbl">' + esc(st === 'Other stores' ? 'Other' : st) + '</div></button>';
+    }).join('');
+  }
+  document.getElementById('storeRow').addEventListener('click', function (ev) {
+    const b = ev.target.closest('button[data-store]');
+    if (!b) return;
+    storeView = b.getAttribute('data-store');
+    showTab('lists');
+  });
+
+  let pendingStorePic = null;
+  function renderStorePics() {
+    const icons = loadStoreIcons();
+    document.getElementById('storePics').innerHTML = STORE_VIEWS.map(function (st) {
+      return '<div class="sprow">' + circleHtml(st, icons) + '<div class="nm">' + esc(st) + '</div>' +
+        '<button class="gbtn" data-pic="choose" data-store="' + esc(st) + '">Choose picture</button>' +
+        (safeImage(icons[st]) ? '<button class="gbtn" data-pic="reset" data-store="' + esc(st) + '">Reset</button>' : '') + '</div>';
+    }).join('');
+  }
+  document.getElementById('storePics').addEventListener('click', function (ev) {
+    const b = ev.target.closest('button[data-pic]');
+    if (!b) return;
+    const st = b.getAttribute('data-store');
+    if (b.getAttribute('data-pic') === 'reset') {
+      const o = loadStoreIcons(); delete o[st]; writeStoreIcons(o); renderStorePics(); renderStoreRow(); return;
+    }
+    pendingStorePic = st;
+    document.getElementById('storePicFile').click();
+  });
+  document.getElementById('storePicFile').addEventListener('change', async function (ev) {
+    const f = ev.target.files[0];
+    ev.target.value = '';
+    if (!f || !pendingStorePic) return;
+    try {
+      const data = await makeThumb(f);
+      const o = loadStoreIcons(); o[pendingStorePic] = data;
+      if (writeStoreIcons(o)) { renderStorePics(); renderStoreRow(); statusEl.textContent = 'Picture saved for ' + pendingStorePic + '.'; }
+      else statusEl.textContent = 'Could not save the picture (browser storage is blocked).';
+    } catch (e) { statusEl.textContent = 'Could not read that picture.'; }
+    pendingStorePic = null;
+  });
+
   renderSaved();
   renderLists();
+  renderStorePics();
 
   function saveCurrent() {
     if (!current || !current.code || (current.source !== 'label' && current.source !== 'database')) return;
