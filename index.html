@@ -97,6 +97,20 @@
   .filters { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
   .fbtn { border: 1px solid #bbb; background: #fff; border-radius: 16px; padding: 6px 12px; font-size: 14px; cursor: pointer; }
   .fbtn.on { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  .chip.gray { background: #888; }
+  .gcat { margin: 16px 0 2px; font-size: 12px; font-weight: bold; color: #8a5a00; text-transform: uppercase; letter-spacing: .5px; }
+  .gstore { margin: 18px 0 2px; font-size: 17px; font-weight: bold; border-bottom: 2px solid #f2b600; padding-bottom: 2px; }
+  .gitem { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #ddd; }
+  .gitem input[type=checkbox] { width: 26px; height: 26px; flex: none; margin: 0; }
+  .gitem .gi { flex: 1; min-width: 0; cursor: pointer; }
+  .gitem .gn { font-size: 15px; font-weight: bold; word-break: break-word; }
+  .gitem.done .gn { text-decoration: line-through; color: #888; }
+  .gitem.done .chip { opacity: .5; }
+  .gitem .note { margin: 2px 0 0; }
+  .gbtn { border: 1px solid #bbb; background: #fff; border-radius: 8px; padding: 6px 9px; font-size: 13px; cursor: pointer; flex: none; }
+  select, #gName, #gBrand { width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; margin: 6px 0; }
+  .grow { display: flex; gap: 8px; margin: 10px 0; }
+  .grow .btn { margin: 0; }
 </style>
 </head>
 <body>
@@ -105,6 +119,7 @@
 
   <!-- ===== SCAN TAB ===== -->
   <section class="tabpanel" id="panel-scan">
+    <div class="banner b-warn" id="linkNote" style="display:none"></div>
     <button class="btn" id="scanBtn">Scan barcode</button>
     <div id="wrap"><video id="video" playsinline muted></video><div id="box"></div></div>
     <button class="btn gray" id="stopBtn" style="display:none">Stop camera</button>
@@ -141,9 +156,29 @@
   <!-- ===== LISTS TAB ===== -->
   <section class="tabpanel" id="panel-lists" hidden>
     <h2>Shopping lists</h2>
-    <div class="banner b-warn"><b>Coming soon.</b> This tab will group your products by store (Costco, Sprouts, Aldi...)
-      with tick-off lists for shopping, and show each product's verdict color.
-      <br><br>For now, collect your list in the Excel template. Later it can be imported here.</div>
+    <div class="filters" id="storeBar"></div>
+    <p class="note" id="listsSummary"></p>
+    <div id="groceryList"></div>
+    <div class="grow">
+      <button class="btn gray" id="shareListBtn">Share this list</button>
+      <button class="btn gray" id="clearTicksBtn">Clear ticks</button>
+    </div>
+    <details id="addBox">
+      <summary>+ Add an item</summary>
+      <input id="gName" placeholder="Product name">
+      <input id="gBrand" placeholder="Brand (optional)">
+      <select id="gStore"></select>
+      <select id="gCat"></select>
+      <button class="btn green" id="gAddBtn">Add to list</button>
+    </details>
+    <details>
+      <summary>Import from my spreadsheet (CSV)</summary>
+      <p class="note">In Excel or Google Sheets: File, then Save as or Download, then <b>CSV</b>. Pick that file here. Products already on the list are kept as they are, and only new ones are added.</p>
+      <label class="btn gray" for="csvFile">Choose CSV file</label>
+      <input id="csvFile" type="file" accept=".csv,text/csv,text/plain" style="display:none">
+      <p class="note" id="csvMsg" style="font-weight:bold;color:#1a1a1a"></p>
+    </details>
+    <p class="note">Tap a product name to see its verdict. Tap "Link" and scan its barcode so its verdict color shows here.</p>
   </section>
 
   <!-- ===== MORE TAB ===== -->
@@ -177,7 +212,7 @@
       <textarea id="pasteBox" rows="5" placeholder="Paste backup text here"></textarea>
       <button class="btn gray" id="pasteBtn">Restore from pasted text</button>
     </details>
-    <p class="note">The backup has only your saved products. It does not include your API key. Restoring adds to what is already on this phone and never deletes anything.</p>
+    <p class="note">The backup has your saved products and your shopping list. It does not include your API key. Restoring adds to what is already on this phone and never deletes anything.</p>
 
     <h2>About</h2>
     <p class="note">Nutri Label Check - version <span id="ver"></span>. Your saved products and key stay on this phone.</p>
@@ -193,7 +228,7 @@
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
-  const APP_VERSION = '2026-10-17 dbsave-1';
+  const APP_VERSION = '2026-10-19 lists-1';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -384,9 +419,11 @@
   // ----- backup / restore (pure helpers) -----
   const BACKUP_APP = 'label-check-backup';
 
-  function buildBackup(all, when) {
-    return { app: BACKUP_APP, version: 1, exportedAt: when || new Date().toISOString(),
-             count: Object.keys(all).length, products: all };
+  function buildBackup(all, when, groceries) {
+    const b = { app: BACKUP_APP, version: 1, exportedAt: when || new Date().toISOString(),
+                count: Object.keys(all).length, products: all };
+    if (Array.isArray(groceries)) b.groceries = groceries;
+    return b;
   }
 
   // Reads backup text. Returns { ok, products, skipped } or { ok:false, error }.
@@ -412,7 +449,8 @@
       };
       if (s.unverified === true) clean[key].unverified = true;
     });
-    return { ok: true, products: clean, skipped: skipped };
+    const gl = Array.isArray(d.groceries) ? d.groceries.map(cleanGrocery).filter(function (g) { return g; }) : [];
+    return { ok: true, products: clean, skipped: skipped, groceries: gl };
   }
 
   // Adds backup products to what is on the phone. Never deletes. If both have the
@@ -459,6 +497,119 @@
       return { key: k, s: s, level: e.level, star: star, reason: reason };
     }).sort(function (a, b) { return (Date.parse(b.s.savedAt) || 0) - (Date.parse(a.s.savedAt) || 0); });
   }
+
+  // ---------- shopping list helpers (pure) ----------
+  const GROCERY_CATS = ['Fruits', 'Vegetables', 'Dairy & eggs', 'Dairy alternatives', 'Meat & poultry', 'Fish & seafood',
+    'Bread & grains', 'Cereal & breakfast', 'Beans & legumes', 'Nuts & seeds', 'Oils & condiments', 'Dips & spreads',
+    'Sauces & spices', 'Snacks - savory', 'Snacks - sweet', 'Beverages', 'Frozen', 'Canned & packaged', 'Supplements', 'Other'];
+  const MAIN_STORES = ['Costco', 'Sprouts', 'Whole Foods', 'Publix', 'Kroger'];
+  const OTHER_STORES = ['Aldi', 'Walmart', "Trader Joe's", 'Target', 'Cherians', 'Online', 'Other'];
+  function gName(s) { return String(s == null ? '' : s).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+  function storeGroup(s) { return MAIN_STORES.indexOf(s) !== -1 ? s : 'Other stores'; }
+  function newGid() { return 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function cleanGrocery(g) {
+    if (!g || typeof g !== 'object') return null;
+    const t = function (v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); };
+    const name = t(g.name);
+    if (!name) return null;
+    return { id: (typeof g.id === 'string' && g.id) ? g.id : newGid(), name: name, brand: t(g.brand), category: t(g.category),
+             store: t(g.store), also: t(g.also), barcode: String(g.barcode == null ? '' : g.barcode).replace(/\D/g, ''), done: g.done === true };
+  }
+  // Adds new items by name. Never deletes, never changes ticks. Fills a missing barcode.
+  function mergeGroceries(mine, incoming) {
+    const out = mine.slice();
+    const idx = {};
+    out.forEach(function (g, i) { idx[gName(g.name)] = i; });
+    let added = 0, kept = 0;
+    incoming.forEach(function (raw) {
+      const g = cleanGrocery(raw);
+      if (!g) return;
+      const k = gName(g.name);
+      if (idx[k] === undefined) {
+        if (out.some(function (x) { return x.id === g.id; })) g.id = newGid();
+        out.push(g); idx[k] = out.length - 1; added++;
+      } else {
+        const cur = out[idx[k]];
+        if (!cur.barcode && g.barcode) cur.barcode = g.barcode;
+        kept++;
+      }
+    });
+    return { merged: out, added: added, kept: kept };
+  }
+  function parseCsv(text) {
+    text = String(text).replace(/^﻿/, '');
+    const first = text.split(/\r?\n/, 1)[0] || '';
+    const delim = [',', '\t', ';'].map(function (d) { return [d, first.split(d).length]; })
+      .sort(function (a, b) { return b[1] - a[1]; })[0][0];
+    const rows = [];
+    let row = [], cur = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c;
+      } else if (c === '"') q = true;
+      else if (c === delim) { row.push(cur); cur = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && text[i + 1] === '\n') i++; row.push(cur); cur = ''; rows.push(row); row = []; }
+      else cur += c;
+    }
+    if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+    return rows.filter(function (r) { return r.some(function (c) { return String(c).trim() !== ''; }); });
+  }
+  function groceriesFromCsv(text) {
+    const rows = parseCsv(text);
+    if (rows.length < 2) return { ok: false, error: 'That file has no rows to import.' };
+    const head = rows[0].map(function (h) { return String(h).trim().toLowerCase(); });
+    const col = function (re) { for (let i = 0; i < head.length; i++) if (re.test(head[i])) return i; return -1; };
+    const c = { name: col(/^(product name|product|name)$/), brand: col(/^brand/), barcode: col(/^barcode/), category: col(/^category/),
+                store: col(/^store/), also: col(/^also/), status: col(/^status/) };
+    if (c.name < 0) return { ok: false, error: 'Could not find a "Product name" column in the first row.' };
+    const items = [];
+    let skipped = 0;
+    rows.slice(1).forEach(function (r) {
+      const get = function (i) { return (i < 0 || i >= r.length) ? '' : String(r[i]).trim(); };
+      const name = get(c.name);
+      if (!name) return;
+      if (/^example/i.test(name) || /^avoid$/i.test(get(c.status))) { skipped++; return; }
+      let bc = get(c.barcode);
+      if (/e\+/i.test(bc)) bc = '';          // Excel turned the barcode into a number like 1.2E+11
+      const g = cleanGrocery({ name: name, brand: get(c.brand), barcode: bc, category: get(c.category), store: get(c.store), also: get(c.also) });
+      if (g) items.push(g); else skipped++;
+    });
+    return { ok: true, items: items, skipped: skipped };
+  }
+  const MATCH_STOP = ['the', 'and', 'with', 'for', 'oz', 'lbs', 'pack', 'free', 'all'];
+  function matchTokens(s) {
+    const t = gName(s).replace(/\b(no|non) ?fat\b/g, 'nonfat').replace(/\bnofat\b/g, 'nonfat');
+    const seen = {}, out = [];
+    t.split(' ').forEach(function (w) {
+      if (w.length > 3 && w.charAt(w.length - 1) === 's') w = w.slice(0, -1);
+      if (w.length < 3 || MATCH_STOP.indexOf(w) !== -1 || seen[w]) return;
+      seen[w] = 1; out.push(w);
+    });
+    return out;
+  }
+  // Finds the one list item (without a barcode yet) that clearly matches a product name, or null
+  function bestListMatch(list, productName) {
+    const pt = matchTokens(productName);
+    if (!pt.length) return null;
+    const set = {};
+    pt.forEach(function (w) { set[w] = 1; });
+    const scored = [];
+    list.forEach(function (g) {
+      if (g.barcode) return;
+      const it = matchTokens(g.name + ' ' + g.brand);
+      if (!it.length) return;
+      scored.push({ g: g, s: it.filter(function (w) { return set[w]; }).length / it.length });
+    });
+    scored.sort(function (a, b) { return b.s - a.s; });
+    if (!scored.length || scored[0].s < 0.8) return null;
+    if (scored[1] && scored[1].s > scored[0].s - 0.15) return null;
+    return scored[0].g;
+  }
+  function groceryLine(g) {
+    const showBrand = g.brand && gName(g.name).indexOf(gName(g.brand)) === -1;
+    return '- ' + g.name + (showBrand ? ' (' + g.brand + ')' : '');
+  }
   // ==== PURE END ====
 
   // ---------- screen elements ----------
@@ -493,10 +644,12 @@
   // ---------- tabs ----------
   function showTab(name) {
     if (stream) stopCamera();
+    if (name !== 'scan' && typeof linkTarget !== 'undefined') { linkTarget = null; if (typeof renderLinkNote === 'function') renderLinkNote(); }
     document.querySelectorAll('.tabpanel').forEach(function (p) { p.hidden = (p.id !== 'panel-' + name); });
     document.querySelectorAll('#tabbar .tab').forEach(function (b) {
       b.classList.toggle('on', b.getAttribute('data-tab') === name);
     });
+    if (name === 'lists' && typeof renderLists === 'function') renderLists();
     window.scrollTo(0, 0);
   }
   document.getElementById('tabbar').addEventListener('click', function (ev) {
@@ -606,6 +759,7 @@
         '<button class="btn gray tiny" data-act="removesaved" data-key="' + esc(r.key) + '">Remove</button></div>';
     });
     savedList.innerHTML = html;
+    if (typeof renderLists === 'function' && document.getElementById('groceryList')) { try { renderLists(); } catch (e) {} }
   }
 
   function openSaved(key) {
@@ -771,10 +925,10 @@
       'Backup & restore' + (pending ? ' - ' + pending + ' not backed up' : '');
   }
 
-  function backupText() { return JSON.stringify(buildBackup(loadSaved()), null, 1); }
+  function backupText() { return JSON.stringify(buildBackup(loadSaved(), undefined, loadGroceries()), null, 1); }
   function backupName() { return 'label-check-backup-' + new Date().toISOString().slice(0, 10) + '.json'; }
   function hasProducts() {
-    if (Object.keys(loadSaved()).length) return true;
+    if (Object.keys(loadSaved()).length || loadGroceries().length) return true;
     say('Nothing saved yet, so there is nothing to back up.');
     return false;
   }
@@ -863,6 +1017,11 @@
     if (!writeSaved(m.merged)) { say('Could not save on this phone (browser storage is blocked).'); return; }
     renderSaved();
     let msg = 'Restored. Added ' + m.added + ', updated ' + m.updated + ', kept ' + m.kept + ' you already had.';
+    if (r.groceries && r.groceries.length) {
+      const gm = mergeGroceries(loadGroceries(), r.groceries);
+      writeGroceries(gm.merged); renderLists();
+      msg += ' Shopping list: added ' + gm.added + ' item(s).';
+    }
     if (r.skipped) msg += ' Skipped ' + r.skipped + ' damaged entr' + (r.skipped === 1 ? 'y' : 'ies') + '.';
     say(msg);
   }
@@ -884,7 +1043,232 @@
     box.value = '';
   });
 
+
+  // ---------- shopping lists (screen) ----------
+  const GROCERY_KEY = 'grocery_list_v1';
+  const SEED_GROCERIES = [["Nofat Greek Yogurt","Stonyfield","Dairy & eggs","Sprouts","Publix"],["Nofat Kefir","Lifeway","Dairy & eggs","Sprouts","Publix"],["Organic Valley 2% Reduced Fat Milk","Organic Valley","Dairy & eggs","Sprouts","Publix"],["Organic Brown Eggs","Costco organic","Dairy & eggs","Costco",""],["Boudin Sourdough Bread","Boudin","Bread & grains","Costco",""],["Sprouts Organic Rustic Italian Sourdough Bread","Sprouts","Bread & grains","Sprouts",""],["Ithaca Olive Oil Hummus","Ithaca","Dips & spreads","Sprouts",""],["Artichoke Jalapeno Creamy Cashew Dip","Nuts For Cheese","Dips & spreads","Sprouts",""],["Almonds Sliced","Mariani","Nuts & seeds","Publix",""],["100% Avocado Oil-Based Classic Mayonnaise Gluten & Dairy Free","Chosen Foods","Oils & condiments","Sprouts",""],["Organic Rolled Oats","One-Degree","Cereal & breakfast","Costco",""],["GreenWise Egg Whites","GreenWise","Dairy & eggs","Publix",""],["Sprouts Cage Free 100% Liquid Egg Whites","Sprouts","Dairy & eggs","Sprouts",""],["Lovebird Cereals","Lovebird","Cereal & breakfast","Whole Foods",""],["Green Valley Creamery Lactose Free Organic Cream Cheese","Green Valley","Dairy & eggs","Sprouts",""],["Mayorga Organic Chia Seeds","Mayorga","Nuts & seeds","Costco",""],["Kirkland Signature Organic Whole Cashews, Unsalted","Kirkland Signature","Nuts & seeds","Costco",""],["Sun-Maid, Raisins","Sun-Maid","Fruits","Costco",""],["Ottavio Avocado Oil","Ottavio","Oils & condiments","Costco",""],["Olive Oil","Graza","Oils & condiments","Costco",""],["Kirkland Signature Wild Argentine Raw Shrimp","Kirkland Signature","Fish & seafood","Costco",""],["Kirkland Signature Wild Alaskan Sockeye Salmon","Kirkland Signature","Fish & seafood","Costco",""],["Kirkland Signature Wild Pacific Cod Fillet","Kirkland Signature","Fish & seafood","Costco",""],["Australis All Natural Barramundi, Sweet & Mild, 2 lbs","Australis Aquaculture (The Better Fish)","Fish & seafood","Costco",""],["Kirkland Signature Wild Pacific Mahi Mahi","Kirkland Signature","Fish & seafood","Costco",""],["La Mexicana Organic Mango Salsa","La Mexicana","Dips & spreads","Costco",""],["Masienda - Frozen, Tortillas Corn Organic","Masienda","Bread & grains","Whole Foods",""],["Masienda - Frozen, Tortillas Corn Organic - Blue Corn","Masienda","Bread & grains","Whole Foods",""],["Kirkland Signature Organic Hemp Hearts","Kirkland Signature","Nuts & seeds","Costco",""],["Wild Planet, Albacore Wild Tuna","Wild Planet","Fish & seafood","Costco",""],["Kirkland Signature, Organic Quinoa","Kirkland Signature","Bread & grains","Costco",""],["Kirkland Signature Supreme Whole Almonds","Kirkland Signature","Nuts & seeds","Costco",""],["Go Raw Sprouted Organic Pumpkin Seeds with Sea Salt","Go Raw","Nuts & seeds","Costco",""],["Royal Basmati Rice","Royal","Bread & grains","Cherians",""],["Wild Planet Wild Pacific Sardines in Extra Virgin Olive Oil","Wild Planet","Fish & seafood","Costco",""],["Safe Catch Yellowfin Tuna Burger","Safe Catch","Fish & seafood","Costco",""],["Organic Hot Honey Mustard","Primal Kitchen","Oils & condiments","Sprouts",""]];
+  let storeView = 'all';
+  let linkTarget = null;
+  function loadGroceries() {
+    let raw = null;
+    try { raw = localStorage.getItem(GROCERY_KEY); } catch (e) {}
+    if (raw === null) {
+      const seeded = SEED_GROCERIES.map(function (r) { return cleanGrocery({ name: r[0], brand: r[1], category: r[2], store: r[3], also: r[4] }); });
+      writeGroceries(seeded);
+      return seeded;
+    }
+    try { const a = JSON.parse(raw); return Array.isArray(a) ? a.map(cleanGrocery).filter(function (g) { return g; }) : []; } catch (e) { return []; }
+  }
+  function writeGroceries(list) {
+    try { localStorage.setItem(GROCERY_KEY, JSON.stringify(list)); return true; } catch (e) { return false; }
+  }
+  function catRank(c) { const i = GROCERY_CATS.indexOf(c); return i === -1 ? 99 : i; }
+  function sortGroc(a, b) { return catRank(a.category) - catRank(b.category) || a.name.localeCompare(b.name); }
+
+  function verdictChip(g, saved) {
+    if (!g.barcode) return '<span class="chip gray">not scanned yet</span>';
+    const sv = saved[codeKey(g.barcode)];
+    if (!sv) return '<span class="chip gray">not saved yet</span>';
+    const lv = evaluate(sv.nutrients || {}).level;
+    return '<span class="chip ' + lv + '">' + levelLabel(lv) + '</span>' + (sv.unverified ? ' <span class="note">(unverified)</span>' : '');
+  }
+  function groceryRow(g, saved, extra) {
+    const parts = [];
+    if (g.brand && gName(g.name).indexOf(gName(g.brand)) === -1) parts.push(esc(g.brand));
+    if (extra) parts.push(esc(extra));
+    return '<div class="gitem' + (g.done ? ' done' : '') + '" data-id="' + esc(g.id) + '">' +
+      '<input type="checkbox" data-act="tick"' + (g.done ? ' checked' : '') + ' aria-label="in cart">' +
+      '<div class="gi" data-act="open"><div class="gn">' + esc(g.name) + '</div>' +
+      '<div class="note">' + (parts.length ? parts.join(' - ') + '<br>' : '') + verdictChip(g, saved) + '</div></div>' +
+      (g.barcode ? '<button class="gbtn" data-act="unlink">Unlink</button>' : '<button class="gbtn" data-act="link">&#128247; Link</button>') +
+      '<button class="gbtn" data-act="del" aria-label="remove">&#10005;</button></div>';
+  }
+  function inView(g, view) {
+    if (view === 'all') return true;
+    return storeGroup(g.store) === view;
+  }
+  function alsoHere(g, view) {
+    if (view === 'all' || view === 'Other stores' || storeGroup(g.store) === view) return false;
+    return String(g.also || '').split(/[,;\/]/).some(function (x) { return x.trim().toLowerCase() === view.toLowerCase(); });
+  }
+
+  function renderLists() {
+    const list = loadGroceries();
+    const saved = loadSaved();
+    const views = ['all'].concat(MAIN_STORES, ['Other stores']);
+    const todo = function (v) { return list.filter(function (g) { return inView(g, v) && !g.done; }).length; };
+    document.getElementById('storeBar').innerHTML = views.map(function (v) {
+      return '<button class="fbtn' + (storeView === v ? ' on' : '') + '" data-view="' + esc(v) + '">' +
+        (v === 'all' ? 'All' : esc(v)) + ' (' + todo(v) + ')</button>';
+    }).join('');
+    const total = list.length, ticked = list.filter(function (g) { return g.done; }).length;
+    document.getElementById('listsSummary').textContent = total + ' item(s) on your list' + (ticked ? ', ' + ticked + ' ticked' : '') + '.';
+
+    let html = '';
+    if (!total) html = '<p class="note">Your list is empty. Add an item below, or import your spreadsheet.</p>';
+    else if (storeView === 'all') {
+      MAIN_STORES.concat(['Other stores']).forEach(function (st) {
+        const rows = list.filter(function (g) { return storeGroup(g.store) === st; }).sort(sortGroc);
+        if (!rows.length) return;
+        html += '<div class="gstore">' + esc(st) + ' (' + rows.filter(function (g) { return !g.done; }).length + ')</div>';
+        rows.forEach(function (g) { html += groceryRow(g, saved, (g.store && st === 'Other stores') ? g.store : ''); });
+      });
+    } else {
+      const rows = list.filter(function (g) { return inView(g, storeView); }).sort(sortGroc);
+      if (!rows.length) html = '<p class="note">Nothing on the ' + esc(storeView) + ' list yet. Use "+ Add an item" below.</p>';
+      let last = null;
+      rows.forEach(function (g) {
+        const c = g.category || 'No category';
+        if (c !== last) { html += '<div class="gcat">' + esc(c) + '</div>'; last = c; }
+        html += groceryRow(g, saved, (storeView === 'Other stores' && g.store) ? g.store : '');
+      });
+      const also = list.filter(function (g) { return alsoHere(g, storeView); }).sort(sortGroc);
+      if (also.length) {
+        html += '<details><summary>Also sold at ' + esc(storeView) + ' (' + also.length + ')</summary>';
+        also.forEach(function (g) { html += groceryRow(g, saved, 'usually at ' + g.store); });
+        html += '</details>';
+      }
+    }
+    document.getElementById('groceryList').innerHTML = html;
+  }
+
+  // add-item form choices
+  (function () {
+    document.getElementById('gStore').innerHTML = MAIN_STORES.concat(OTHER_STORES).map(function (x) { return '<option>' + esc(x) + '</option>'; }).join('');
+    document.getElementById('gCat').innerHTML = '<option value="">Category (optional)</option>' +
+      GROCERY_CATS.map(function (x) { return '<option>' + esc(x) + '</option>'; }).join('');
+  })();
+
+  document.getElementById('storeBar').addEventListener('click', function (ev) {
+    const b = ev.target.closest('button[data-view]');
+    if (!b) return;
+    storeView = b.getAttribute('data-view');
+    renderLists();
+  });
+
+  function renderLinkNote() {
+    const el = document.getElementById('linkNote');
+    const g = linkTarget ? loadGroceries().filter(function (x) { return x.id === linkTarget; })[0] : null;
+    if (!g) { linkTarget = null; el.style.display = 'none'; el.innerHTML = ''; return; }
+    el.style.display = 'block';
+    el.innerHTML = 'Scan the barcode of: <b>' + esc(g.name) + '</b> <button class="gbtn" id="linkCancel">Cancel</button>';
+  }
+  document.getElementById('linkNote').addEventListener('click', function (ev) {
+    if (ev.target.id === 'linkCancel') { linkTarget = null; renderLinkNote(); }
+  });
+  // called when a barcode is read while a list item is waiting for one
+  function linkBarcodeToItem(code) {
+    if (!linkTarget) return '';
+    const list = loadGroceries();
+    const g = list.filter(function (x) { return x.id === linkTarget; })[0];
+    linkTarget = null;
+    if (!g) { renderLinkNote(); return ''; }
+    g.barcode = code;
+    writeGroceries(list);
+    renderLinkNote(); renderLists();
+    return 'Barcode linked to your list item: ' + g.name + '.';
+  }
+  // after saving a product: attach its barcode to the one clearly matching list item
+  function autoLinkToList(code, productName) {
+    const list = loadGroceries();
+    if (list.some(function (g) { return g.barcode && codeKey(g.barcode) === codeKey(code); })) return '';
+    const m = bestListMatch(list, productName || '');
+    if (!m) return '';
+    m.barcode = code;
+    writeGroceries(list); renderLists();
+    return m.name;
+  }
+
+  document.getElementById('groceryList').addEventListener('click', function (ev) {
+    const t = ev.target;
+    const row = t.closest('.gitem');
+    if (!row) return;
+    const id = row.getAttribute('data-id');
+    const act = (t.closest('[data-act]') || {}).getAttribute ? t.closest('[data-act]').getAttribute('data-act') : '';
+    const list = loadGroceries();
+    const g = list.filter(function (x) { return x.id === id; })[0];
+    if (!g) return;
+    if (act === 'tick') { g.done = !!t.checked; writeGroceries(list); renderLists(); return; }
+    if (act === 'del') {
+      if (window.confirm('Remove "' + g.name + '" from your list?')) { writeGroceries(list.filter(function (x) { return x.id !== id; })); renderLists(); }
+      return;
+    }
+    if (act === 'unlink') { g.barcode = ''; writeGroceries(list); renderLists(); statusEl.textContent = 'Barcode unlinked.'; return; }
+    if (act === 'link') {
+      showTab('scan');
+      linkTarget = id; renderLinkNote();
+      if (detector) scanBtn.click();
+      else statusEl.textContent = 'Type the barcode digits below, or tap Scan barcode.';
+      return;
+    }
+    if (act === 'open') {
+      if (!g.barcode) { statusEl.textContent = 'Tap "Link" and scan this product to see its verdict here.'; return; }
+      showTab('scan');
+      if (loadSaved()[codeKey(g.barcode)]) openSaved(codeKey(g.barcode)); else handleBarcode(g.barcode);
+    }
+  });
+
+  document.getElementById('gAddBtn').addEventListener('click', function () {
+    const name = document.getElementById('gName').value;
+    const g = cleanGrocery({ name: name, brand: document.getElementById('gBrand').value,
+      store: document.getElementById('gStore').value, category: document.getElementById('gCat').value });
+    if (!g) { statusEl.textContent = 'Type the product name first.'; return; }
+    const list = loadGroceries();
+    if (list.some(function (x) { return gName(x.name) === gName(g.name); })) { statusEl.textContent = 'That product is already on your list.'; return; }
+    list.push(g);
+    if (!writeGroceries(list)) { statusEl.textContent = 'Could not save on this phone (browser storage is blocked).'; return; }
+    document.getElementById('gName').value = ''; document.getElementById('gBrand').value = '';
+    renderLists();
+    statusEl.textContent = 'Added to ' + g.store + '.';
+  });
+
+  document.getElementById('clearTicksBtn').addEventListener('click', function () {
+    const list = loadGroceries();
+    list.forEach(function (g) { if (inView(g, storeView)) g.done = false; });
+    writeGroceries(list); renderLists();
+  });
+
+  document.getElementById('shareListBtn').addEventListener('click', async function () {
+    const list = loadGroceries().filter(function (g) { return !g.done; });
+    let text = '';
+    if (storeView === 'all') {
+      MAIN_STORES.concat(['Other stores']).forEach(function (st) {
+        const rows = list.filter(function (g) { return storeGroup(g.store) === st; }).sort(sortGroc);
+        if (rows.length) text += st + ':\n' + rows.map(groceryLine).join('\n') + '\n\n';
+      });
+    } else {
+      const rows = list.filter(function (g) { return inView(g, storeView); }).sort(sortGroc);
+      if (rows.length) text = storeView + ' list:\n' + rows.map(groceryLine).join('\n');
+    }
+    text = text.trim();
+    if (!text) { statusEl.textContent = 'Nothing to share. Everything here is ticked or the list is empty.'; return; }
+    try {
+      if (navigator.share) { await navigator.share({ title: 'Grocery list', text: text }); return; }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(text); statusEl.textContent = 'List copied. Paste it into a message.'; }
+    catch (e) { statusEl.textContent = 'Could not share the list on this phone.'; }
+  });
+
+  document.getElementById('csvFile').addEventListener('change', function (ev) {
+    const f = ev.target.files[0];
+    ev.target.value = '';
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = function () {
+      const r = groceriesFromCsv(String(reader.result));
+      const msgEl = document.getElementById('csvMsg');
+      if (!r.ok) { msgEl.textContent = r.error; statusEl.textContent = r.error; return; }
+      const m = mergeGroceries(loadGroceries(), r.items);
+      if (!writeGroceries(m.merged)) { msgEl.textContent = 'Could not save on this phone (browser storage is blocked).'; return; }
+      renderLists();
+      msgEl.textContent = 'Imported. Added ' + m.added + ' new, ' + m.kept + ' already on your list' + (r.skipped ? ', skipped ' + r.skipped : '') + '.';
+    };
+    reader.onerror = function () { document.getElementById('csvMsg').textContent = 'Could not read that file.'; };
+    reader.readAsText(f);
+  });
+
   renderSaved();
+  renderLists();
 
   function saveCurrent() {
     if (!current || !current.code || (current.source !== 'label' && current.source !== 'database')) return;
@@ -900,11 +1284,13 @@
     if (current.source === 'database') entry.unverified = true;
     all[codeKey(current.code)] = entry;
     if (writeSaved(all)) {
+      const linkedItem = autoLinkToList(current.code, entry.name || current.name);
       lastScanCode = null; verifyCode = null; verifyNote.textContent = '';
       statusEl.textContent = (current.source === 'database')
         ? 'Saved (unverified). Verify it with a label photo when you can.'
         : 'Saved. Next time you scan this barcode, it will use these numbers.';
       renderSaved();
+      if (linkedItem) statusEl.textContent += ' Linked to your list item: ' + linkedItem + '.';
       if (autoBackupOn()) {
         try { downloadBackupFile(); statusEl.textContent += ' A backup file was also saved to Downloads.'; }
         catch (e) { statusEl.textContent += ' (Automatic backup file could not be saved.)'; }
@@ -975,7 +1361,7 @@
     stopBtn.style.display = 'none';
     if (detector) { scanBtn.style.display = 'block'; scanBtn.textContent = 'Scan barcode'; }
   }
-  stopBtn.addEventListener('click', function () { stopCamera(); statusEl.textContent = ''; });
+  stopBtn.addEventListener('click', function () { stopCamera(); statusEl.textContent = ''; linkTarget = null; renderLinkNote(); });
 
   document.getElementById('manualBtn').addEventListener('click', function () {
     const code = manual.value.replace(/\D/g, '');
@@ -1008,6 +1394,8 @@
     verifyCode = null;
     verifyNote.textContent = '';
     resultEl.innerHTML = '';
+    const linkedMsg = linkBarcodeToItem(code);
+    if (linkedMsg) verifyNote.textContent = linkedMsg;
 
     const saved = loadSaved()[codeKey(code)];
     if (saved) {
