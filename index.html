@@ -109,7 +109,11 @@
   .gitem .note { margin: 2px 0 0; }
   .gbtn { border: 1px solid #bbb; background: #fff; border-radius: 8px; padding: 6px 9px; font-size: 13px; cursor: pointer; flex: none; }
   select, #gName, #gBrand { width: 100%; padding: 10px; font-size: 16px; box-sizing: border-box; margin: 6px 0; }
-  .stores { display: flex; justify-content: space-between; gap: 4px; margin: 2px 0 12px; }
+  .storepanel { background: #FFF3C4; border-radius: 18px; padding: 12px 10px 10px; margin: 22px -4px 8px; }
+  .sphead { display: flex; align-items: center; justify-content: space-between; margin: 0 6px 12px; }
+  .sphead h2 { margin: 0; font-size: 21px; }
+  #seeAllStores { background: none; border: none; color: #1a73e8; font-size: 15px; font-weight: bold; cursor: pointer; padding: 4px; }
+  .stores { display: flex; align-items: flex-start; justify-content: space-between; gap: 4px; margin: 2px 0 12px; }
   .st { flex: 1; min-width: 0; background: none; border: none; padding: 0; text-align: center; cursor: pointer; position: relative; }
   .st .circ { width: 54px; height: 54px; border-radius: 50%; margin: 0 auto; display: flex; align-items: center; justify-content: center;
               color: #fff; font-weight: bold; font-size: 20px; overflow: hidden; border: 2px solid #fff; box-shadow: 0 1px 5px rgba(0,0,0,.35); }
@@ -133,8 +137,6 @@
   <!-- ===== SCAN TAB ===== -->
   <section class="tabpanel" id="panel-scan">
     <div class="banner b-warn" id="linkNote" style="display:none"></div>
-    <div class="note" style="text-align:center;margin:0 0 6px">Your stores - tap one to open its shopping list</div>
-    <div class="stores" id="storeRow"></div>
     <button class="btn" id="scanBtn">Scan barcode</button>
     <div id="wrap"><video id="video" playsinline muted></video><div id="box"></div></div>
     <button class="btn gray" id="stopBtn" style="display:none">Stop camera</button>
@@ -155,6 +157,11 @@
     <button class="btn green" id="readBtn" style="display:none">Check product</button>
 
     <div id="result"></div>
+
+    <div class="storepanel">
+      <div class="sphead"><h2>Shopping stores</h2><button id="seeAllStores">See all</button></div>
+      <div class="stores" id="storeRow"></div>
+    </div>
   </section>
 
   <!-- ===== SAVED TAB ===== -->
@@ -248,7 +255,7 @@
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
-  const APP_VERSION = '2026-10-20 stores-1';
+  const APP_VERSION = '2026-10-20 stores-2';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -1320,6 +1327,7 @@
         (n ? '<span class="cnt">' + n + '</span>' : '') + '<div class="lbl">' + esc(st === 'Other stores' ? 'Other' : st) + '</div></button>';
     }).join('');
   }
+  document.getElementById('seeAllStores').addEventListener('click', function () { storeView = 'all'; showTab('lists'); });
   document.getElementById('storeRow').addEventListener('click', function (ev) {
     const b = ev.target.closest('button[data-store]');
     if (!b) return;
