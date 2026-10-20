@@ -241,6 +241,12 @@
       <button class="btn green" id="rSave">Save recipe</button>
       <button class="btn gray" id="rCancel" style="display:none">Cancel editing</button>
     </details>
+    <details id="rBulk">
+      <summary>+ Add many links at once</summary>
+      <select id="bCat"></select>
+      <textarea id="bLinks" rows="6" placeholder="Paste all the reel links here, one per line. To give one a name, type it before the link, like: Kale salad https://..."></textarea>
+      <button class="btn green" id="bAdd">Add all links</button>
+    </details>
     <p class="note">Tip: in Instagram open the reel, tap Share, then Copy link. Come back here and tap "Paste link from clipboard".</p>
   </section>
 
@@ -297,7 +303,7 @@
 <script>
   // If you ever get a "model not found" error, change this one word:
   const MODEL = 'gemini-3.5-flash-lite';
-  const APP_VERSION = '2026-10-20 theme-1';
+  const APP_VERSION = '2026-10-20 bulk-1';
 
   // ==== PURE START (no screen code in this block) ====
 
@@ -720,6 +726,20 @@
       out.push(r); seen[key(r)] = true; added++;
     });
     return { merged: out, added: added, kept: kept };
+  }
+  // Turns pasted text with many links into recipes. A line with one link and some words uses the words as the name.
+  function parseBulkLinks(text, cat, startNum) {
+    const out = []; let n = startNum;
+    String(text == null ? '' : text).split(/\r?\n/).forEach(function (line) {
+      const urls = line.match(/https?:\/\/[^\s<>"']+/gi) || [];
+      if (!urls.length) return;
+      const words = urls.length === 1 ? line.replace(urls[0], '').replace(/^[\s\-–:|,.*•\d)(]+|[\s\-–:|,.*]+$/g, '').trim() : '';
+      urls.forEach(function (u) {
+        const link = u.replace(/[.,;)]+$/, '');
+        out.push({ title: words || ((cat || 'Recipe') + ' reel ' + (n++)), category: cat, link: link });
+      });
+    });
+    return out;
   }
   // ==== PURE END ====
 
@@ -1534,6 +1554,21 @@
     document.getElementById('rSave').textContent = 'Save recipe';
     document.getElementById('rCancel').style.display = 'none';
   }
+  document.getElementById('bCat').innerHTML = '<option value="">Category (pick one)</option>' + RECIPE_CATS.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join('');
+  document.getElementById('bAdd').addEventListener('click', function () {
+    const cat = document.getElementById('bCat').value;
+    if (!cat) { statusEl.textContent = 'Pick a category first.'; return; }
+    const list = loadRecipes();
+    const have = list.filter(function (r) { return r.category === cat; }).length;
+    const found = parseBulkLinks(document.getElementById('bLinks').value, cat, have + 1);
+    if (!found.length) { statusEl.textContent = 'No links found. Paste the Instagram links into the box.'; return; }
+    const m = mergeRecipes(list, found);
+    if (!writeRecipes(m.merged)) { statusEl.textContent = 'Could not save on this phone (browser storage is blocked).'; return; }
+    document.getElementById('bLinks').value = '';
+    document.getElementById('rBulk').open = false;
+    recipeView = cat; renderRecipes();
+    statusEl.textContent = 'Added ' + m.added + ' recipe(s) to ' + cat + (m.kept ? ' (' + m.kept + ' already saved).' : '.') + ' Tap Edit on any card to rename it or add ingredients.';
+  });
   document.getElementById('rCat').innerHTML = '<option value="">Category (pick one)</option>' +
     RECIPE_CATS.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join('');
   document.getElementById('recipeRow').addEventListener('click', function (ev) {
